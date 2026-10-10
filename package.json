@@ -1,0 +1,19 @@
+{
+  "name": "restaurante",
+  "version": "0.1.0",
+  "description": "Servicio restaurante: pedidos sobre la base común (core)",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test" },
+  "dependencies": {
+    "core": "github:Hector3008/core",
+    "express": "^5.0.0"
+  },
+  "peerDependencies": {
+    "mongoose": "^8.0.0 || ^9.0.0"
+  },
+  "devDependencies": {
+    "mongoose": "^9.10.4"
+  }
+}
