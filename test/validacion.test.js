@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   validarCreacion,
+  validarLineas,
   validarEdicion,
   validarCoherencia,
   validarCode,
@@ -44,7 +45,7 @@ describe("validación de pedidos", () => {
       { codigo: "A", cantidad: 0 },
       { codigo: "A", cantidad: 1.5 },
       { codigo: "A", cantidad: 100 },
-      { codigo: "A", precio: 1 },
+      { codigo: "A", precio: -1 },
       { codigo: "A", notas: "x".repeat(201) },
       "A",
     ])
@@ -85,5 +86,13 @@ describe("validación de pedidos", () => {
     const s = calcularTotales([{ precio: 5 }, { precio: null }], [1, 2]);
     assert.deepEqual(s.subtotales, [5, null]);
     assert.equal(s.total, null);
+  });
+
+  it("precio propio: solo en líneas del catálogo, número >= 0 con 2 decimales", () => {
+    const ok = validarLineas([{ codigo: "A", precio: 0 }, { codigo: "B", precio: 12.5 }, { codigo: "C" }]);
+    assert.deepEqual(ok.map((l) => l.precio), [0, 12.5, undefined]);
+    for (const precio of [-1, 1.234, "5", null, NaN, Infinity])
+      assert.throws(() => validarLineas([{ codigo: "A", precio }]), (e) => e.codigo === "DATOS_INVALIDOS", String(precio));
+    assert.throws(() => validarLineas([{ libre: { nombre: "x" }, precio: 3 }]), (e) => e.codigo === "DATOS_INVALIDOS");
   });
 });

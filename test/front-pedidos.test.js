@@ -7,7 +7,7 @@ import { validarCreacion, validarEdicion, validarLinea } from "../src/validacion
 import {
   permite, ESTADOS, EDITABLES, MOTIVOS_ANULACION, FILTROS, accionesDe, destinoDe,
   formatoDinero, parsearPrecio, totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad,
-  lineaAEnvio, lineasDesdeDetalle, formularioVacio, formularioDesdeDetalle, validarFormulario,
+  lineaAEnvio, fijarPrecio, puedeCambiarPrecio, lineasDesdeDetalle, formularioVacio, formularioDesdeDetalle, validarFormulario,
   cuerpoCreacion, cuerpoEdicion,
 } from "../client/src/pedidos.js";
 
@@ -184,4 +184,37 @@ test("mensajeDeError: usa el texto del servicio y trata aparte sesión, conflict
   assert.equal(mensajeDeError(new ErrorApi(0, "SIN_CONEXION", "sin red")), "sin red");
   assert.match(mensajeDeError(new Error("x")), /inesperado/);
   assert.equal(urlCuenta, "/cuenta/");
+});
+
+test("precio propio: fijarPrecio, qué se envía y cuándo se puede cambiar", () => {
+  let ls = agregarDelCatalogo([], { codigo: "CAFE-1", nombre: "Café", precio: 6.5 });
+  const k = ls[0].clave;
+  assert.deepEqual(lineaAEnvio(ls[0]), { codigo: "CAFE-1", cantidad: 1 }); // sin cambio no se envía precio
+  ls = fijarPrecio(ls, k, "5,5");
+  assert.equal(ls[0].precio, 5.5);
+  assert.deepEqual(lineaAEnvio(ls[0]), { codigo: "CAFE-1", precio: 5.5, cantidad: 1 });
+  assert.equal(fijarPrecio(ls, k, "5.555"), ls, "un texto inválido no cambia nada");
+  assert.equal(fijarPrecio(ls, k, "6.50")[0].modificado, false, "igual al catálogo = sin cambio");
+  const vuelta = fijarPrecio(ls, k, "");
+  assert.deepEqual([vuelta[0].precio, vuelta[0].modificado], [6.5, false]);
+  assert.equal(totalEstimado(fijarPrecio(ls, k, "0")), 0, "gratis es un precio válido");
+  // un ítem sin precio en el catálogo: escribir uno lo marca como cambiado
+  const sin = fijarPrecio(agregarDelCatalogo([], { codigo: "X", nombre: "X" }), "l-no", "1");
+  assert.equal(sin[0].precio, null);
+  // una línea libre se edita sin marca (su precio es el que ella misma declara)
+  let libre = agregarLibre([], { nombre: "Torta", precio: null });
+  libre = fijarPrecio(libre, libre[0].clave, "9");
+  assert.deepEqual(lineaAEnvio(libre[0]), { libre: { nombre: "Torta", precio: 9 }, cantidad: 1 });
+  assert.equal(puedeCambiarPrecio(["estacion:administracion"]), true);
+  assert.equal(puedeCambiarPrecio(["documento:editar", "documento:crear"]), false);
+});
+
+test("editar un pedido con precio cambiado lo conserva y lo reenvía", () => {
+  const detalle = {
+    doc: { canal: "salon", mesa: "1", lineas: [{ cantidad: 1, notas: null, subtotal: 5 }] },
+    snapshot: { lineas: [{ origen: "catalogo", codigo: "CAFE-1", nombre: "Café", precio: 5, precioCatalogo: 6.5, precioModificado: true }] },
+  };
+  const [l] = lineasDesdeDetalle(detalle);
+  assert.deepEqual(lineaAEnvio(l), { codigo: "CAFE-1", precio: 5, cantidad: 1 });
+  assert.equal(fijarPrecio([l], l.clave, "")[0].precio, 6.5);
 });

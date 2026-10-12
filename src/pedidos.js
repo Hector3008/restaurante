@@ -30,9 +30,20 @@ export function crearServicioPedidos(core) {
     return d;
   }
 
-  // Une las líneas del cliente con su copia del catálogo por posición (5.16) y calcula los importes
-  async function armarLineas({ empresaId, lineas }) {
-    const copias = await catalogo.instantanea({ empresaId, items: lineas.map((l) => l.item) });
+  // Une las líneas del cliente con su copia del catálogo por posición (5.16) y calcula los importes.
+  // Una línea del catálogo con `precio` propio sustituye el precio de la copia y guarda el del catálogo
+  // en `precioCatalogo` (el original queda a la vista). Poner un precio propio exige la estación de
+  // administración, salvo repetir uno que el pedido ya tenía (`preciosVigentes`: código → precio), para
+  // que quien edita un pedido con un precio ya cambiado no necesite el permiso solo por guardarlo.
+  async function armarLineas({ empresaId, actor, lineas, preciosVigentes = new Map() }) {
+    const conPrecio = lineas.filter((l) => l.precio !== undefined);
+    if (conPrecio.some((l) => preciosVigentes.get(String(l.item).toUpperCase()) !== l.precio))
+      exigir(actor, "estacion:administracion");
+    const copias = (await catalogo.instantanea({ empresaId, items: lineas.map((l) => l.item) })).map((c, i) =>
+      lineas[i].precio === undefined
+        ? c
+        : { ...c, precioCatalogo: c.precio ?? null, precio: lineas[i].precio, precioModificado: true },
+    );
     const { subtotales, total } = calcularTotales(copias, lineas.map((l) => l.cantidad));
     return {
       snapshotLineas: copias,
@@ -67,7 +78,7 @@ export function crearServicioPedidos(core) {
     exigir(actor, "documento:crear");
     const p = validarCreacion(cuerpo);
     return await conEmpresa(empresaId, async () => {
-      const { snapshotLineas, docLineas, total } = await armarLineas({ empresaId, lineas: p.lineas });
+      const { snapshotLineas, docLineas, total } = await armarLineas({ empresaId, actor, lineas: p.lineas });
       const cliente = p.clienteId
         ? await clientes.instantanea({ empresaId, clienteId: p.clienteId, campos: ["nombre", "telefono"] })
         : null;
@@ -118,7 +129,14 @@ export function crearServicioPedidos(core) {
       validarCoherencia(doc);
       let snapshot;
       if (cambio.lineas) {
-        const { snapshotLineas, docLineas, total } = await armarLineas({ empresaId, lineas: cambio.lineas });
+        const { snapshotLineas, docLineas, total } = await armarLineas({
+          empresaId,
+          actor,
+          lineas: cambio.lineas,
+          preciosVigentes: new Map(
+            (actual.snapshot?.lineas ?? []).filter((x) => x.precioModificado).map((x) => [x.codigo, x.precio]),
+          ),
+        });
         doc.lineas = docLineas;
         doc.total = total;
         snapshot = { ...actual.snapshot, lineas: snapshotLineas };

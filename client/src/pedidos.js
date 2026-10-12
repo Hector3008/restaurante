@@ -88,9 +88,38 @@ export function agregarDelCatalogo(lineas, item) {
     return lineas.map((l, j) => (j === i ? { ...l, cantidad: Math.min(l.cantidad + 1, MAX_CANTIDAD) } : l));
   return [
     ...lineas,
-    { clave: clave(), codigo: item.codigo, nombre: item.nombre, precio: item.precio ?? null, cantidad: 1, notas: "" },
+    {
+      clave: clave(),
+      codigo: item.codigo,
+      nombre: item.nombre,
+      precio: item.precio ?? null,
+      precioCatalogo: item.precio ?? null,
+      modificado: false,
+      cantidad: 1,
+      notas: "",
+    },
   ];
 }
+
+/**
+ * Precio unitario escrito a mano en una línea. Devuelve las líneas nuevas, o las mismas si el texto no es
+ * un precio válido (hasta 2 decimales). En una línea del catálogo, vacío = volver al precio del catálogo;
+ * en una libre, vacío = sin precio. El servidor solo acepta el precio propio de una línea del catálogo
+ * con estacion:administracion (ver `puedeCambiarPrecio`).
+ */
+export function fijarPrecio(lineas, k, texto) {
+  const p = parsearPrecio(texto);
+  if (!p.ok) return lineas;
+  return lineas.map((l) => {
+    if (l.clave !== k) return l;
+    if (l.libre) return { ...l, precio: p.valor };
+    if (p.valor === null) return { ...l, precio: l.precioCatalogo ?? null, modificado: false };
+    return { ...l, precio: p.valor, modificado: p.valor !== (l.precioCatalogo ?? null) };
+  });
+}
+
+/** Cambiar el precio de una línea del catálogo lo permite la estación de administración (igual que en el servicio). */
+export const puedeCambiarPrecio = (permisos) => permite(permisos, "estacion:administracion");
 
 /** Línea libre (no está en el catálogo): { clave, libre: true, nombre, precio, cantidad, notas }. */
 export function agregarLibre(lineas, { nombre, precio }) {
@@ -106,7 +135,7 @@ export function cambiarCantidad(lineas, k, delta) {
 /** Una línea del formulario → la que acepta POST/PUT /restaurante/pedidos. */
 export function lineaAEnvio(l) {
   const base = { cantidad: l.cantidad, ...(l.notas?.trim() ? { notas: l.notas.trim() } : {}) };
-  if (!l.libre) return { codigo: l.codigo, ...base };
+  if (!l.libre) return { codigo: l.codigo, ...(l.modificado ? { precio: l.precio } : {}), ...base };
   const libre = { nombre: l.nombre };
   if (l.precio !== null && l.precio !== undefined) libre.precio = l.precio;
   if (l.codigoLibre) libre.codigo = l.codigoLibre;
@@ -128,7 +157,13 @@ export function lineasDesdeDetalle(detalle) {
     };
     return s.origen === "libre"
       ? { ...comun, libre: true, codigoLibre: s.codigo ?? null }
-      : { ...comun, codigo: s.codigo };
+      : {
+          ...comun,
+          codigo: s.codigo,
+          // Con precio propio: el del catálogo queda como referencia y se reenvía el propio al guardar
+          precioCatalogo: s.precioModificado ? s.precioCatalogo ?? null : s.precio ?? null,
+          modificado: Boolean(s.precioModificado),
+        };
   });
 }
 

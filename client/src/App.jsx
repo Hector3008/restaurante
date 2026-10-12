@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ErrorApi, mensajeDeError, urlCuenta } from "./api.js";
-import { permite } from "./pedidos.js";
+import { permite, puedeCambiarPrecio } from "./pedidos.js";
 import ListaPedidos from "./ListaPedidos.jsx";
 import FormularioPedido from "./FormularioPedido.jsx";
 import DetallePedido from "./DetallePedido.jsx";
@@ -84,6 +84,7 @@ export default function App() {
       {vista.tipo === "nuevo" && (
         <FormularioPedido
           puedeVerCatalogo={permite(permisos, "catalogo:leer")}
+          puedeCambiarPrecio={puedeCambiarPrecio(permisos)}
           alGuardar={(p) => setVista({ tipo: "detalle", code: p.code })}
           alCancelar={aLista}
         />
@@ -102,6 +103,7 @@ export default function App() {
         <FormularioPedido
           detalle={vista.detalle}
           puedeVerCatalogo={permite(permisos, "catalogo:leer")}
+          puedeCambiarPrecio={puedeCambiarPrecio(permisos)}
           alGuardar={(p) => setVista({ tipo: "detalle", code: p.code })}
           alCancelar={() => setVista({ tipo: "detalle", code: vista.detalle.code })}
         />

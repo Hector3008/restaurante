@@ -58,6 +58,7 @@ function nucleoFalso() {
 
 const ADMIN = { usuarioId: "u1", permisos: ["*"] };
 const MESERO = { usuarioId: "u2", permisos: ["documento:crear", "documento:leer", "documento:editar"] };
+const CAJERO = { usuarioId: "u4", permisos: ["documento:crear", "documento:leer", "documento:editar", "estacion:administracion"] };
 const SOLO_LEER = { usuarioId: "u3", permisos: ["documento:leer"] };
 const E = "e1";
 const cod = (c) => (e) => e?.codigo === c;
@@ -127,6 +128,36 @@ describe("servicio de pedidos (núcleo falso)", () => {
     assert.equal(e.snapshot.cliente.clienteId, "c1");
     assert.equal(core.llamadas.at(-1)[1].esperaVersion, 1);
     await assert.rejects(svc.editar({ empresaId: E, actor: MESERO, code: p.code, esperaVersion: 1, notas: "otra" }), cod("CONFLICTO_VERSION"));
+  });
+
+  it("precio propio en una línea del catálogo: exige administración, guarda el original y suma con el nuevo", async () => {
+    nuevo();
+    const lineas = [{ codigo: "CAFE-1", cantidad: 2, precio: 5 }, { codigo: "SINPRECIO", precio: 3.5 }, { codigo: "TORTA-1" }];
+    await assert.rejects(svc.crear({ empresaId: E, actor: MESERO, ...base, lineas }), cod("PERMISO_INSUFICIENTE"));
+    const p = await svc.crear({ empresaId: E, actor: CAJERO, ...base, lineas });
+    assert.equal(p.doc.total, 23.4); // 2×5 + 3.5 + 9.9
+    assert.deepEqual(p.snapshot.lineas.map((l) => [l.precio, l.precioCatalogo, l.precioModificado]), [
+      [5, 6.5, true], [3.5, null, true], [9.9, undefined, undefined],
+    ]);
+  });
+
+  it("editar un pedido con precio ya cambiado no pide administración si se repite ese mismo precio", async () => {
+    nuevo();
+    const p = await svc.crear({ empresaId: E, actor: CAJERO, ...base, lineas: [{ codigo: "CAFE-1", precio: 5 }] });
+    const e = await svc.editar({ empresaId: E, actor: MESERO, code: p.code, lineas: [{ codigo: "CAFE-1", cantidad: 3, precio: 5 }] });
+    assert.equal(e.doc.total, 15);
+    await assert.rejects(
+      svc.editar({ empresaId: E, actor: MESERO, code: p.code, lineas: [{ codigo: "CAFE-1", precio: 4 }] }),
+      cod("PERMISO_INSUFICIENTE"),
+    );
+  });
+
+  it("editar: sin `precio` la línea vuelve al precio del catálogo", async () => {
+    nuevo();
+    const p = await svc.crear({ empresaId: E, actor: CAJERO, ...base, lineas: [{ codigo: "CAFE-1", precio: 5 }] });
+    const e = await svc.editar({ empresaId: E, actor: MESERO, code: p.code, lineas: [{ codigo: "CAFE-1" }] });
+    assert.equal(e.doc.total, 6.5);
+    assert.equal(e.snapshot.lineas[0].precioModificado, undefined);
   });
 
   it("editar: no deja un pedido de salón sin mesa", async () => {

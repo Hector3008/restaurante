@@ -104,6 +104,9 @@ export default function DetallePedido({ code, permisos, alVolver, alEditar, alCa
               </span>
               <span className="rs-num">{formatoDinero(l.subtotal, moneda)}</span>
             </div>
+            {snap[i]?.precioModificado && (
+              <small>Precio cambiado: {formatoDinero(snap[i].precio, moneda)} (catálogo: {formatoDinero(snap[i].precioCatalogo, moneda)})</small>
+            )}
             {l.notas && <small>{l.notas}</small>}
           </li>
         ))}

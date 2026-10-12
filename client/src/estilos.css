@@ -97,3 +97,9 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .rs-anular { padding: 14px; border: 1px solid var(--color-borde); border-radius: var(--radio); background: var(--color-superficie); }
 .rs-historial { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .rs-historial small { margin-left: 8px; }
+
+.rs-precio { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.rs-precio label { display: inline-flex; align-items: center; gap: 6px; }
+.rs-precio input { width: 8ch; padding: 6px 8px; font: inherit; text-align: right; color: var(--color-texto); background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: 8px; }
+.rs-precio input[aria-invalid="true"] { border-color: #e5484d; }
+.rs-precio__aviso { flex-basis: 100%; text-align: right; opacity: .8; }

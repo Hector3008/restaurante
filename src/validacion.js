@@ -34,7 +34,7 @@ export function validarCode(code) {
 export function validarLinea(l, i) {
   const donde = `lineas[${i}]`;
   if (!esObjeto(l)) throw malo(`${donde}: debe ser un objeto`);
-  soloClaves(l, ["codigo", "libre", "cantidad", "notas"], donde);
+  soloClaves(l, ["codigo", "libre", "precio", "cantidad", "notas"], donde);
   if ((l.codigo === undefined) === (l.libre === undefined))
     throw malo(`${donde}: lleva 'codigo' (del catálogo) o 'libre', no las dos cosas ni ninguna`);
   let item;
@@ -45,11 +45,25 @@ export function validarLinea(l, i) {
     if (!esObjeto(l.libre)) throw malo(`${donde}.libre debe ser un objeto`);
     item = { libre: l.libre };
   }
+  // Precio propio de una línea del catálogo (cambia el del catálogo solo en este pedido). Las líneas
+  // libres llevan su precio dentro de `libre`.
+  let precio;
+  if (l.precio !== undefined) {
+    if (l.codigo === undefined) throw malo(`${donde}.precio solo va en una línea del catálogo (en una libre, dentro de 'libre')`);
+    precio = validarPrecio(l.precio, `${donde}.precio`);
+  }
   const cantidad = l.cantidad === undefined ? 1 : l.cantidad;
   if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > MAX_CANTIDAD)
     throw malo(`${donde}.cantidad: un entero de 1 a ${MAX_CANTIDAD}`);
   const notas = textoOpcional(l.notas, 200, `${donde}.notas`) ?? null;
-  return { item, cantidad, notas };
+  return { item, cantidad, notas, precio };
+}
+
+// Un número >= 0 con 2 decimales como máximo (como los del catálogo, 5.16)
+function validarPrecio(v, nombre) {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1e9 || Math.round(v * 100) / 100 !== v)
+    throw malo(`${nombre}: un número de 0 en adelante con 2 decimales como máximo`);
+  return v;
 }
 
 export function validarLineas(lineas) {

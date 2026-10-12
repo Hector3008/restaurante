@@ -8,6 +8,7 @@ import {
   cambiarCantidad,
   cuerpoCreacion,
   cuerpoEdicion,
+  fijarPrecio,
   formatoDinero,
   formularioDesdeDetalle,
   formularioVacio,
@@ -84,6 +85,45 @@ function BuscadorCatalogo({ alElegir }) {
   );
 }
 
+// Precio unitario de una línea. Guarda lo que se escribe como texto para no estorbar al teclear
+// ("5." o "5,") y solo cambia el pedido cuando el texto es un precio válido.
+function PrecioLinea({ linea, editable, moneda, alCambiar }) {
+  const [texto, setTexto] = useState(linea.precio === null ? "" : String(linea.precio));
+  const valido = parsearPrecio(texto).ok;
+  if (!editable)
+    return (
+      <span className="rs-num">
+        {linea.precio === null ? "sin precio" : formatoDinero(linea.precio * linea.cantidad, moneda)}
+        {linea.modificado && <small> · precio cambiado</small>}
+      </span>
+    );
+  return (
+    <span className="rs-precio">
+      <label>
+        <small>Precio</small>
+        <input
+          inputMode="decimal"
+          aria-label={`Precio de ${linea.nombre}`}
+          aria-invalid={!valido}
+          value={texto}
+          onChange={(e) => {
+            setTexto(e.target.value);
+            alCambiar(e.target.value);
+          }}
+          onBlur={() => setTexto(linea.precio === null ? "" : String(linea.precio))}
+        />
+      </label>
+      <span className="rs-num">{linea.precio === null ? "sin precio" : formatoDinero(linea.precio * linea.cantidad, moneda)}</span>
+      {linea.modificado && (
+        <small className="rs-precio__aviso">
+          Catálogo: {formatoDinero(linea.precioCatalogo, moneda)}
+        </small>
+      )}
+      {!valido && <small className="rs-precio__aviso" role="alert">Hasta 2 decimales.</small>}
+    </span>
+  );
+}
+
 function LineaLibre({ alAgregar }) {
   const [abierto, setAbierto] = useState(false);
   const [nombre, setNombre] = useState("");
@@ -127,7 +167,7 @@ function LineaLibre({ alAgregar }) {
   );
 }
 
-export default function FormularioPedido({ detalle, puedeVerCatalogo, alGuardar, alCancelar }) {
+export default function FormularioPedido({ detalle, puedeVerCatalogo, puedeCambiarPrecio, alGuardar, alCancelar }) {
   const editando = Boolean(detalle);
   const [f, setF] = useState(() => (detalle ? formularioDesdeDetalle(detalle) : formularioVacio()));
   const [error, setError] = useState("");
@@ -228,9 +268,12 @@ export default function FormularioPedido({ detalle, puedeVerCatalogo, alGuardar,
                     <strong>{l.nombre}</strong>
                     {l.libre ? <small> · libre</small> : <small> · {l.codigo}</small>}
                   </span>
-                  <span className="rs-num">
-                    {l.precio === null ? "sin precio" : formatoDinero(l.precio * l.cantidad, moneda)}
-                  </span>
+                  <PrecioLinea
+                    linea={l}
+                    moneda={moneda}
+                    editable={l.libre || puedeCambiarPrecio}
+                    alCambiar={(t) => lineas((x) => fijarPrecio(x, l.clave, t))}
+                  />
                 </div>
                 <div className="rs-linea__pie">
                   <span className="rs-cantidad">

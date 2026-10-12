@@ -26,7 +26,9 @@ Un solo documento (`tipo: "pedido"`, código `PD-0000001`) con estados `abierta 
 
 Además: `GET /pedidos`, `GET /pedidos/:code` (`?version=`), `POST /pedidos`, `PUT /pedidos/:code`. Todas las que escriben exigen `x-requested-with`.
 
-Canales: `salon` (exige `mesa`), `llevar` (exige `referencia`), `delivery` (exige `entrega: { direccion, telefono }`). Las líneas son `{ codigo, cantidad?, notas? }` o `{ libre: {...}, cantidad?, notas? }`; el servidor copia nombre y precio del catálogo al `snapshot` y calcula los importes (el cliente no los manda).
+Canales: `salon` (exige `mesa`), `llevar` (exige `referencia`), `delivery` (exige `entrega: { direccion, telefono }`). Las líneas son `{ codigo, precio?, cantidad?, notas? }` o `{ libre: {...}, cantidad?, notas? }`; el servidor copia nombre y precio del catálogo al `snapshot` y calcula los importes (el cliente no los manda).
+
+**Precio propio** (`precio` en una línea del catálogo): cambia el precio solo en ese pedido. Exige `estacion:administracion`; el snapshot guarda `precioCatalogo` (el original) y `precioModificado: true`. Al editar, repetir el mismo precio que el pedido ya tenía no pide el permiso; omitir `precio` devuelve la línea al precio del catálogo. En una línea libre el precio va dentro de `libre` y no pide permiso. Hasta 2 decimales, mínimo 0.
 
 ## Front de Pedidos
 
@@ -44,7 +46,7 @@ npm run dev     # Vite en :5173 con proxy al gateway (GATEWAY_URL para cambiarlo
 ## Pruebas
 
 ```
-npm test                                   # 43 pruebas sin base de datos (servicio, front y servido estático)
+npm test                                   # 49 pruebas sin base de datos (servicio, front y servido estático)
 MONGODB_URI=mongodb://localhost:27017 npm test   # suma las de MongoDB real (pedidos.test.js)
 ```
 
