@@ -5,7 +5,12 @@
   "main": "src/index.js",
   "type": "module",
   "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test" },
+  "files": ["src", "client/dist"],
+  "scripts": {
+    "build": "npm --prefix client install && npm --prefix client run build",
+    "dev": "npm --prefix client run dev",
+    "test": "node --test"
+  },
   "dependencies": {
     "core": "github:Hector3008/core",
     "express": "^5.0.0"
