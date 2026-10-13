@@ -76,6 +76,7 @@ export default function App() {
       {vista.tipo === "lista" && (
         <ListaPedidos
           key={version}
+          permisos={permisos}
           puedeCrear={permite(permisos, "documento:crear")}
           alAbrir={(code) => setVista({ tipo: "detalle", code })}
           alCrear={() => setVista({ tipo: "nuevo" })}

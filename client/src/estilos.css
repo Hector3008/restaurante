@@ -67,6 +67,8 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .rs-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .rs-tarjeta { width: 100%; text-align: left; display: grid; gap: 4px; padding: 14px 16px; font: inherit; color: inherit; background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: var(--radio); cursor: pointer; }
 .rs-tarjeta:hover { border-color: var(--color-principal); }
+.rs-tarjeta-caja { display: grid; gap: 8px; }
+.rs-tarjeta__acciones { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .rs-tarjeta__fila { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .rs-tarjeta small, .rs small { color: var(--color-texto-suave); }
 .rs-num { font-variant-numeric: tabular-nums; white-space: nowrap; }

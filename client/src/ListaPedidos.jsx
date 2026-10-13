@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
-import { CANALES, ESTADOS, FILTROS, destinoDe, formatoDinero } from "./pedidos.js";
+import { CANALES, ESTADOS, FILTROS, accionesDe, destinoDe, formatoDinero } from "./pedidos.js";
 
 const REFRESCO_MS = 20000;
 
-export default function ListaPedidos({ puedeCrear, alAbrir, alCrear }) {
+export default function ListaPedidos({ permisos, puedeCrear, alAbrir, alCrear }) {
   const [filtro, setFiltro] = useState("activos");
   const [pedidos, setPedidos] = useState(null);
   const [error, setError] = useState("");
   const [actualizando, setActualizando] = useState(false);
+  const [moviendo, setMoviendo] = useState(null); // code del pedido que se está moviendo
   const filtroRef = useRef(filtro);
   filtroRef.current = filtro;
 
@@ -40,6 +41,22 @@ export default function ListaPedidos({ puedeCrear, alAbrir, alCrear }) {
     }, REFRESCO_MS);
     return () => clearInterval(id);
   }, [cargar]);
+
+  // Paso rápido desde la tarjeta. Lleva la versión que se ve: si alguien cambió el pedido antes, el
+  // servidor responde 409 y se recarga la lista para ver lo último (mismo criterio que en el detalle).
+  async function mover(p, ruta) {
+    if (moviendo) return;
+    setMoviendo(p.code);
+    setError("");
+    try {
+      await api.paso(p.code, ruta, { esperaVersion: p.version });
+    } catch (e) {
+      setError(`${p.code}: ${mensajeDeError(e)}`);
+    } finally {
+      await cargar(true);
+      setMoviendo(null);
+    }
+  }
 
   return (
     <section aria-labelledby="t-pedidos">
@@ -80,24 +97,41 @@ export default function ListaPedidos({ puedeCrear, alAbrir, alCrear }) {
         <p className="rs-vacio">No hay pedidos en este estado.</p>
       ) : (
         <ul className="rs-lista">
-          {(pedidos ?? []).map((p) => (
-            <li key={p.code}>
-              <button type="button" className="rs-tarjeta" onClick={() => alAbrir(p.code)}>
-                <span className="rs-tarjeta__fila">
-                  <strong>{p.code}</strong>
-                  <span className={`rs-estado rs-estado--${p.estado}`}>{ESTADOS[p.estado] ?? p.estado}</span>
-                </span>
-                <span className="rs-tarjeta__fila">
-                  <span>{destinoDe(p)}</span>
-                  <span className="rs-num">{formatoDinero(p.total, p.moneda)}</span>
-                </span>
-                <small>
-                  {CANALES[p.canal] ?? p.canal}
-                  {p.creadoTs ? ` · ${new Date(p.creadoTs).toLocaleString("es", { dateStyle: "short", timeStyle: "short" })}` : ""}
-                </small>
-              </button>
-            </li>
-          ))}
+          {(pedidos ?? []).map((p) => {
+            const { pasos } = accionesDe(p.estado, permisos);
+            return (
+              <li key={p.code} className="rs-tarjeta-caja">
+                <button type="button" className="rs-tarjeta" onClick={() => alAbrir(p.code)}>
+                  <span className="rs-tarjeta__fila">
+                    <strong>{p.code}</strong>
+                    <span className={`rs-estado rs-estado--${p.estado}`}>{ESTADOS[p.estado] ?? p.estado}</span>
+                  </span>
+                  <span className="rs-tarjeta__fila">
+                    <span>{destinoDe(p)}</span>
+                    <span className="rs-num">{formatoDinero(p.total, p.moneda)}</span>
+                  </span>
+                  <small>
+                    {p.creadoTs ? new Date(p.creadoTs).toLocaleString("es", { dateStyle: "short", timeStyle: "short" }) : CANALES[p.canal] ?? p.canal}
+                  </small>
+                </button>
+                {pasos.length > 0 && (
+                  <div className="rs-tarjeta__acciones">
+                    {pasos.map((paso) => (
+                      <button
+                        key={paso.id}
+                        type="button"
+                        className="rs-btn rs-btn--primario"
+                        disabled={moviendo !== null}
+                        onClick={() => mover(p, paso.id)}
+                      >
+                        {moviendo === p.code ? "Enviando…" : paso.etiqueta}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
