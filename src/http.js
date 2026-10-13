@@ -18,19 +18,29 @@ function responder(res, e, next) {
 }
 
 /**
- * Rutas de pedidos. Cada una sale con sus middlewares en orden
+ * Rutas del restaurante. Cada una sale con sus middlewares en orden
  * (autenticar → requierePermiso → estación del contexto de eventos → handler), así no se puede
  * olvidar ninguno. La estación la fija la ruta, nunca el cliente (arquitectura 5.4).
  *
+ * Pedidos (lo que se cobra: todos los ítems de una mesa o persona)
  *   GET  /pedidos (?estado=a,b &limite= &saltar=)        documento:leer
  *   GET  /pedidos/:code (?version=)                       documento:leer
- *   POST /pedidos                                         documento:crear
- *   PUT  /pedidos/:code                                   documento:editar
- *   POST /pedidos/:code/enviar | lista | entregar | cobrar | anular     documento:editar
- *        (el motor pide además la estación de cada paso; anular lleva { motivo: { codigo, detalle? } })
+ *   POST /pedidos        { canal, mesa|referencia|entrega, items: [...] }   documento:crear
+ *   POST /pedidos/:code/items   { items: [...] }          documento:crear   (más ítems en el mismo pedido)
+ *   PUT  /pedidos/:code  { esperaVersion?, mesa, referencia, entrega, notas }   documento:editar
+ *   POST /pedidos/:code/cobrar                            documento:editar + estación administración (el motor)
+ *   POST /pedidos/:code/anular  { motivo: { codigo, detalle? } }   igual
+ *
+ * Ítems (un ítem que se mueve por las estaciones; cocina trabaja con estos)
+ *   GET  /items (?estado=a,b &limite= &saltar=)        documento:leer
+ *   GET  /items/:code                                   documento:leer
+ *   POST /items/:code/lista                             documento:editar + estación cocina (el motor)
+ *   POST /items/:code/entregar                          documento:editar
+ *   POST /items/:code/anular  { motivo }                documento:editar (+ administración si ya salió de cocina)
  */
-export function montarRutasPedidos(router, core, pedidos) {
+export function montarRutas(router, core, servicio) {
   const { autenticar, requierePermiso, eventos, auth } = core;
+  const { pedidos, items } = servicio;
 
   const envolver = (escribe, fn) => async (req, res, next) => {
     try {
@@ -45,35 +55,46 @@ export function montarRutasPedidos(router, core, pedidos) {
     actor: { usuarioId: req.auth.usuarioId, permisos: req.rol?.permisos ?? [] },
   });
   const con = (permiso, estacion) => [autenticar(), requierePermiso(permiso), eventos.middleware({ estacion })];
-
   const leer = con("documento:leer", "creacion");
   const crear = con("documento:crear", "creacion");
   const editar = (estacion) => con("documento:editar", estacion);
 
+  const estados = (q) => (q.estado ? String(q.estado).split(",").filter(Boolean) : undefined);
+  const versionDe = (q) => {
+    const v = q?.version;
+    if (v === undefined) return undefined;
+    const n = Number.parseInt(v, 10);
+    if (!Number.isInteger(n)) throw new ErrorPedido("DATOS_INVALIDOS", "version debe ser un entero");
+    return n;
+  };
+
+  // ---------- pedidos ----------
   router.get(
     "/pedidos",
     ...leer,
     envolver(false, async (req, res) => {
       const q = req.query ?? {};
-      const estado = q.estado ? String(q.estado).split(",").filter(Boolean) : undefined;
-      res.status(200).json({ pedidos: await pedidos.listar({ ...base(req), estado, limite: q.limite, saltar: q.saltar }) });
+      res.status(200).json({ pedidos: await pedidos.listar({ ...base(req), estado: estados(q), limite: q.limite, saltar: q.saltar }) });
     }),
   );
   router.get(
     "/pedidos/:code",
     ...leer,
-    envolver(false, async (req, res) => {
-      const v = req.query?.version;
-      const version = v === undefined ? undefined : Number.parseInt(v, 10);
-      if (version !== undefined && !Number.isInteger(version))
-        throw new ErrorPedido("DATOS_INVALIDOS", "version debe ser un entero");
-      res.status(200).json(await pedidos.obtener({ ...base(req), code: req.params.code, version }));
-    }),
+    envolver(false, async (req, res) =>
+      res.status(200).json(await pedidos.obtener({ ...base(req), code: req.params.code, version: versionDe(req.query) })),
+    ),
   );
   router.post(
     "/pedidos",
     ...crear,
     envolver(true, async (req, res) => res.status(201).json(await pedidos.crear({ ...base(req), ...(req.body ?? {}) }))),
+  );
+  router.post(
+    "/pedidos/:code/items",
+    ...crear,
+    envolver(true, async (req, res) =>
+      res.status(201).json(await pedidos.agregarItems({ ...base(req), code: req.params.code, ...(req.body ?? {}) })),
+    ),
   );
   router.put(
     "/pedidos/:code",
@@ -83,21 +104,44 @@ export function montarRutasPedidos(router, core, pedidos) {
       res.status(200).json(await pedidos.editar({ ...base(req), code: req.params.code, esperaVersion, ...cuerpo }));
     }),
   );
-
-  const paso = (ruta, metodo, estacion) =>
+  const pasoPedido = (ruta, metodo) =>
     router.post(
       `/pedidos/:code/${ruta}`,
-      ...editar(estacion),
+      ...editar("administracion"),
       envolver(true, async (req, res) => {
         const { esperaVersion, motivo } = req.body ?? {};
         res.status(200).json(await pedidos[metodo]({ ...base(req), code: req.params.code, esperaVersion, motivo }));
       }),
     );
-  paso("enviar", "enviarACocina", "creacion");
-  paso("lista", "marcarLista", "cocina");
-  paso("entregar", "entregar", "creacion");
-  paso("cobrar", "cobrar", "administracion");
-  paso("anular", "anular", "administracion");
+  pasoPedido("cobrar", "cobrar");
+  pasoPedido("anular", "anular");
+
+  // ---------- ítems (ítems) ----------
+  router.get(
+    "/items",
+    ...leer,
+    envolver(false, async (req, res) => {
+      const q = req.query ?? {};
+      res.status(200).json({ items: await items.listar({ ...base(req), estado: estados(q), limite: q.limite, saltar: q.saltar }) });
+    }),
+  );
+  router.get(
+    "/items/:code",
+    ...leer,
+    envolver(false, async (req, res) => res.status(200).json(await items.obtener({ ...base(req), code: req.params.code }))),
+  );
+  const pasoItem = (ruta, metodo, estacion) =>
+    router.post(
+      `/items/:code/${ruta}`,
+      ...editar(estacion),
+      envolver(true, async (req, res) => {
+        const { esperaVersion, motivo } = req.body ?? {};
+        res.status(200).json(await items[metodo]({ ...base(req), code: req.params.code, esperaVersion, motivo }));
+      }),
+    );
+  pasoItem("lista", "marcarLista", "cocina");
+  pasoItem("entregar", "entregar", "creacion");
+  pasoItem("anular", "anular", "creacion");
 
   return router;
 }

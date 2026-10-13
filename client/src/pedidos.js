@@ -1,4 +1,4 @@
-// Lógica pura del front de pedidos (sin React ni navegador): se prueba con `node --test`.
+// Lógica pura del front de ítems (sin React ni navegador): se prueba con `node --test`.
 //
 // IMPORTANTE: ocultar o mostrar un botón aquí NO es seguridad. El servicio comprueba el permiso de
 // cada operación y el motor de documentos exige la estación de cada paso (arquitectura 5.18).
@@ -10,18 +10,10 @@ export function permite(permisos, requerido) {
   return permisos.some((p) => p === "*" || p === requerido || p === `${recurso}:*`);
 }
 
-export const ESTADOS = {
-  abierta: "Abierto",
-  en_cocina: "En cocina",
-  lista: "Lista",
-  entregada: "Entregado",
-  pagada: "Pagado",
-  anulada: "Anulado",
-};
+export const ESTADOS_PEDIDO = { abierto: "Abierto", pagado: "Pagado", anulado: "Anulado" };
+export const ESTADOS_ITEM = { en_cocina: "En cocina", lista: "Lista", entregado: "Entregado", anulado: "Anulado" };
 export const CANALES = { salon: "Salón", llevar: "Para llevar", delivery: "Delivery" };
-export const ESTADOS_ACTIVOS = ["abierta", "en_cocina", "lista", "entregada"];
-// Mismos que TIPO_PEDIDO.editables y MOTIVOS_ANULACION del servicio (src/tipo-pedido.js)
-export const EDITABLES = ["abierta", "en_cocina"];
+// Mismos que MOTIVOS_ANULACION del servicio (src/tipos.js)
 export const MOTIVOS_ANULACION = [
   ["error_pedido", "Error en el pedido"],
   ["cliente_se_fue", "El cliente se fue"],
@@ -31,15 +23,11 @@ export const MOTIVOS_ANULACION = [
 ];
 export const MAX_CANTIDAD = 99;
 
-/** Filtros de la lista: `estado` es el parámetro `?estado=a,b` de GET /pedidos. */
+/** Filtros de la lista de pedidos: `estado` es el parámetro `?estado=` de GET /pedidos. */
 export const FILTROS = [
-  { id: "activos", titulo: "Activos", estado: ESTADOS_ACTIVOS.join(",") },
-  { id: "abierta", titulo: "Abiertos", estado: "abierta" },
-  { id: "en_cocina", titulo: "En cocina", estado: "en_cocina" },
-  { id: "lista", titulo: "Listos", estado: "lista" },
-  { id: "entregada", titulo: "Entregados", estado: "entregada" },
-  { id: "pagada", titulo: "Pagados", estado: "pagada" },
-  { id: "anulada", titulo: "Anulados", estado: "anulada" },
+  { id: "abierto", titulo: "Abiertos", estado: "abierto" },
+  { id: "pagado", titulo: "Pagados", estado: "pagado" },
+  { id: "anulado", titulo: "Anulados", estado: "anulado" },
 ];
 
 // ---------- dinero ----------
@@ -51,7 +39,7 @@ export function formatoDinero(valor, moneda) {
   if (!Number.isFinite(n)) return "—";
   if (!moneda) return n.toFixed(2);
   try {
-    return new Intl.NumberFormat("es", { style: "currency", currency: moneda }).format(n);
+    return new Intl.NumberFormat("es-PE", { style: "currency", currency: moneda }).format(n);
   } catch {
     return `${n.toFixed(2)} ${moneda}`;
   }
@@ -65,7 +53,7 @@ export function parsearPrecio(texto) {
   return { ok: true, valor: Number(t) };
 }
 
-/** Total que se muestra mientras se arma el pedido (el que vale es el que calcula el servidor).
+/** Total que se muestra mientras se arma el ítem (el que vale es el que calcula el servidor).
  *  Con enteros en centavos y `null` si alguna línea no tiene precio: nunca se inventa un precio. */
 export function totalEstimado(lineas) {
   let centavos = 0;
@@ -76,7 +64,7 @@ export function totalEstimado(lineas) {
   return centavos / 100;
 }
 
-// ---------- líneas del formulario ----------
+// ---------- ítems que se están pidiendo (antes de enviarlos) ----------
 
 let contador = 0;
 const clave = () => `l${++contador}`;
@@ -132,8 +120,8 @@ export function cambiarCantidad(lineas, k, delta) {
   );
 }
 
-/** Una línea del formulario → la que acepta POST/PUT /restaurante/pedidos. */
-export function lineaAEnvio(l) {
+/** Un ítem del formulario → el que acepta POST /pedidos y POST /pedidos/:code/items. */
+export function itemAEnvio(l) {
   const base = { cantidad: l.cantidad, ...(l.notas?.trim() ? { notas: l.notas.trim() } : {}) };
   if (!l.libre) return { codigo: l.codigo, ...(l.modificado ? { precio: l.precio } : {}), ...base };
   const libre = { nombre: l.nombre };
@@ -142,32 +130,7 @@ export function lineaAEnvio(l) {
   return { libre, ...base };
 }
 
-/** Reconstruye las líneas del formulario desde un pedido (doc.lineas y snapshot.lineas van por posición). */
-export function lineasDesdeDetalle(detalle) {
-  const docL = detalle?.doc?.lineas ?? [];
-  const snap = detalle?.snapshot?.lineas ?? [];
-  return docL.map((d, i) => {
-    const s = snap[i] ?? {};
-    const comun = {
-      clave: clave(),
-      nombre: s.nombre ?? "",
-      precio: s.precio ?? null,
-      cantidad: d.cantidad ?? 1,
-      notas: d.notas ?? "",
-    };
-    return s.origen === "libre"
-      ? { ...comun, libre: true, codigoLibre: s.codigo ?? null }
-      : {
-          ...comun,
-          codigo: s.codigo,
-          // Con precio propio: el del catálogo queda como referencia y se reenvía el propio al guardar
-          precioCatalogo: s.precioModificado ? s.precioCatalogo ?? null : s.precio ?? null,
-          modificado: Boolean(s.precioModificado),
-        };
-  });
-}
-
-// ---------- formulario ----------
+// ---------- formulario del pedido ----------
 
 export const formularioVacio = (canal = "salon") => ({
   canal,
@@ -177,22 +140,8 @@ export const formularioVacio = (canal = "salon") => ({
   telefono: "",
   referenciaEntrega: "",
   notas: "",
-  lineas: [],
+  items: [],
 });
-
-export function formularioDesdeDetalle(detalle) {
-  const d = detalle?.doc ?? {};
-  return {
-    canal: d.canal ?? "salon",
-    mesa: d.mesa ?? "",
-    referencia: d.referencia ?? "",
-    direccion: d.entrega?.direccion ?? "",
-    telefono: d.entrega?.telefono ?? "",
-    referenciaEntrega: d.entrega?.referencia ?? "",
-    notas: d.notas ?? "",
-    lineas: lineasDesdeDetalle(detalle),
-  };
-}
 
 /** Ayuda antes de enviar; el servidor es quien valida de verdad. Devuelve un texto o null. */
 export function validarFormulario(f) {
@@ -204,7 +153,7 @@ export function validarFormulario(f) {
     if (!/^\+?[0-9 ()-]{6,30}$/.test(f.telefono.trim()))
       return "El teléfono solo admite dígitos, espacios, guiones y un + inicial.";
   }
-  if (!f.lineas.length) return "Agrega al menos un ítem.";
+  if (!f.items.length) return "Agrega al menos un ítem.";
   return null;
 }
 
@@ -215,52 +164,133 @@ function datosDelCanal(f) {
   if (f.canal === "salon") return { mesa: f.mesa.trim() };
   if (f.canal === "llevar") return { referencia: f.referencia.trim() };
   return {
-    entrega: {
-      direccion: f.direccion.trim(),
-      telefono: f.telefono.trim(),
-      referencia: nulo(f.referenciaEntrega),
-    },
+    entrega: { direccion: f.direccion.trim(), telefono: f.telefono.trim(), referencia: nulo(f.referenciaEntrega) },
   };
 }
 
-/** Cuerpo de POST /restaurante/pedidos. */
-export function cuerpoCreacion(f) {
-  return { canal: f.canal, ...datosDelCanal(f), notas: nulo(f.notas), lineas: f.lineas.map(lineaAEnvio) };
+/** Cuerpo de POST /pedidos: el pedido se abre con su primer ítem. */
+export function cuerpoPedido(f) {
+  return { canal: f.canal, ...datosDelCanal(f), notas: nulo(f.notas), items: f.items.map(itemAEnvio) };
 }
 
-/** Cuerpo de PUT /restaurante/pedidos/:code (el canal no cambia). `lineas` reemplaza todas. */
-export function cuerpoEdicion(f, esperaVersion) {
-  return { esperaVersion, ...datosDelCanal(f), notas: nulo(f.notas), lineas: f.lineas.map(lineaAEnvio) };
+/** Cuerpo de POST /pedidos/:code/items. */
+export const cuerpoItems = (items) => ({ items: items.map(itemAEnvio) });
+
+/** Formulario de los datos de un pedido ya abierto (PUT /pedidos/:code). */
+export function formularioDesdePedido(c) {
+  const d = c?.doc ?? {};
+  return {
+    canal: d.canal ?? "salon",
+    mesa: d.mesa ?? "",
+    referencia: d.referencia ?? "",
+    direccion: d.entrega?.direccion ?? "",
+    telefono: d.entrega?.telefono ?? "",
+    referenciaEntrega: d.entrega?.referencia ?? "",
+    notas: d.notas ?? "",
+    items: [],
+  };
 }
 
-// ---------- qué se ofrece en un pedido ----------
+/** Cuerpo de PUT /pedidos/:code (el canal no cambia). Los ítems no se editan aquí. */
+export function cuerpoDatos(f, esperaVersion) {
+  return { esperaVersion, ...datosDelCanal(f), notas: nulo(f.notas) };
+}
+
+// ---------- qué se ofrece ----------
+
+const EN_CURSO = ["en_cocina", "lista"];
 
 /**
- * Acciones que se muestran para un pedido según su estado y los permisos de la persona.
- * Refleja lo que exige el servidor: documento:editar en la ruta y la estación de cada paso en el motor
- * (enviar → creacion, lista → cocina, cobrar y anular → administracion; entregar no pide estación).
+ * Acciones de un ítem (un ítem) según su estado y los permisos. Refleja lo que exige el servidor:
+ * documento:editar en la ruta; marcar lista pide la estación de cocina; entregar no pide estación; anular
+ * pide estacion:creacion mientras está en cocina y administración después. Ocultar un botón NO es seguridad.
  */
-export function accionesDe(estado, permisos) {
+export function accionesItem(estado, permisos) {
+  const editar = permite(permisos, "documento:editar");
+  const pasos = [];
+  if (estado === "en_cocina" && editar && permite(permisos, "estacion:cocina")) pasos.push({ id: "lista", etiqueta: "Listo" });
+  if (estado === "lista" && editar) pasos.push({ id: "entregar", etiqueta: "Entregar" });
+  const anular =
+    editar &&
+    (estado === "en_cocina" ? permite(permisos, "estacion:creacion") : ["lista", "entregado"].includes(estado) && permite(permisos, "estacion:administracion"));
+  return { pasos, anular: Boolean(anular) };
+}
+
+/** Cuántos ítems hay en cada estado y el total de lo que se cobra. */
+export function resumenItems(items) {
+  const r = { enCocina: 0, listos: 0, entregados: 0, anulados: 0, total: 0, activos: 0, sinPrecio: false };
+  let centavos = 0;
+  for (const i of items ?? []) {
+    if (i.estado === "en_cocina") r.enCocina++;
+    else if (i.estado === "lista") r.listos++;
+    else if (i.estado === "entregado") r.entregados++;
+    else if (i.estado === "anulado") {
+      r.anulados++;
+      continue;
+    }
+    r.activos++;
+    if (i.subtotal === null || i.subtotal === undefined) r.sinPrecio = true;
+    else centavos += Math.round(Number(i.subtotal) * 100);
+  }
+  r.total = r.sinPrecio ? null : centavos / 100;
+  return r;
+}
+
+/**
+ * Acciones de un pedido. Cobrar es de todo el pedido y solo cuando todos los ítems ya se entregaron (o se
+ * anuló), igual que en el servidor; `motivoNoCobrar` explica por qué todavía no.
+ */
+export function accionesPedido(pedido, permisos) {
+  const abierto = pedido?.estado === "abierto";
   const editar = permite(permisos, "documento:editar");
   const admin = editar && permite(permisos, "estacion:administracion");
-  const pasos = [];
-  if (estado === "abierta" && editar && permite(permisos, "estacion:creacion"))
-    pasos.push({ id: "enviar", etiqueta: "Enviar a cocina" });
-  if (estado === "en_cocina" && editar && permite(permisos, "estacion:cocina"))
-    pasos.push({ id: "lista", etiqueta: "Marcar lista" });
-  if (estado === "lista" && editar) pasos.push({ id: "entregar", etiqueta: "Marcar entregado" });
-  if (estado === "entregada" && admin) pasos.push({ id: "cobrar", etiqueta: "Cobrar" });
+  const r = resumenItems(pedido?.items);
+  let motivoNoCobrar = null;
+  if (r.enCocina + r.listos > 0) motivoNoCobrar = `Faltan ${r.enCocina + r.listos} item(s) por entregar.`;
+  else if (r.entregados === 0) motivoNoCobrar = "No hay nada entregado que cobrar.";
   return {
-    pasos,
-    editar: editar && EDITABLES.includes(estado),
-    anular: admin && ["abierta", "en_cocina", "lista", "entregada"].includes(estado),
+    agregar: abierto && permite(permisos, "documento:crear"),
+    editarDatos: abierto && editar,
+    cobrar: abierto && admin,
+    puedeCobrarAhora: abierto && admin && motivoNoCobrar === null,
+    motivoNoCobrar,
+    anular: abierto && admin,
   };
 }
 
-/** Una línea de texto para la tarjeta de la lista: dónde va el pedido. */
-export function destinoDe(p) {
-  if (p.canal === "salon") return p.mesa ? `Mesa ${p.mesa}` : "Salón";
-  if (p.canal === "llevar") return p.referencia ? `Para llevar · ${p.referencia}` : "Para llevar";
-  if (p.canal === "delivery") return p.referencia ? `Delivery · ${p.referencia}` : "Delivery";
+// ---------- cocina: una tarjeta por ítem ----------
+
+/**
+ * Lo que ve cocina: cada ítem en cocina es una tarjeta, no el pedido entera. Así se saca primero
+ * lo que va antes (el café) y se lleva sin esperar al resto (el sándwich). Los más antiguos primero.
+ */
+export function itemsDeCocina(items) {
+  const t = (x) => (x.creadoTs ? Date.parse(x.creadoTs) || 0 : 0);
+  return [...(items ?? [])]
+    .filter((p) => p.estado === "en_cocina")
+    .map((p) => ({ ...p, destino: destinoDe(p.pedido) }))
+    .sort((a, b) => t(a) - t(b) || a.code.localeCompare(b.code));
+}
+
+/** "hace 5 min" para la espera de un ítem en cocina. */
+export function haceCuanto(ts, ahora = Date.now()) {
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return "";
+  const min = Math.max(0, Math.round((ahora - t) / 60000));
+  if (min < 1) return "ahora";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  return `hace ${h} h ${min % 60} min`;
+}
+
+/** Marcar ítems como listos es trabajo de cocina (documento:editar + estacion:cocina). */
+export const puedeMarcarListos = (permisos) => permite(permisos, "documento:editar") && permite(permisos, "estacion:cocina");
+
+/** Una línea de texto: dónde val pedido. */
+export function destinoDe(c) {
+  if (!c) return "";
+  if (c.canal === "salon") return c.mesa ? `Mesa ${c.mesa}` : "Salón";
+  if (c.canal === "llevar") return c.referencia ? `Para llevar · ${c.referencia}` : "Para llevar";
+  if (c.canal === "delivery") return c.referencia ? `Delivery · ${c.referencia}` : "Delivery";
   return "";
 }

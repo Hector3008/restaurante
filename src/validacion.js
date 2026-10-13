@@ -23,16 +23,17 @@ function textoOpcional(v, max, nombre) {
   return t;
 }
 
-export function validarCode(code) {
-  if (typeof code !== "string" || !/^PD-\d{7,}$/.test(code))
-    throw new ErrorPedido("NO_ENCONTRADO", "pedido no encontrado");
+// `prefijo`: DOC_ITEM para un ítem, PD para un pedido
+export function validarCode(code, prefijo) {
+  if (typeof code !== "string" || !new RegExp(`^${prefijo}-\\d{7,}$`).test(code))
+    throw new ErrorPedido("NO_ENCONTRADO", prefijo === "PD" ? "pedido no encontrado" : "ítem no encontrado");
   return code;
 }
 
-// Una línea de entrada: { codigo, cantidad?, notas? } o { libre: {...}, cantidad?, notas? }.
-// Devuelve { item, cantidad, notas }: `item` va a core.catalogo.instantanea y el resto al documento.
+// Un ítem de entrada: { codigo, cantidad?, notas? } o { libre: {...}, cantidad?, notas? }.
+// Devuelve { ítem, cantidad, notas }: `item` va a core.catalogo.instantanea y el resto al documento.
 export function validarLinea(l, i) {
-  const donde = `lineas[${i}]`;
+  const donde = `items[${i}]`;
   if (!esObjeto(l)) throw malo(`${donde}: debe ser un objeto`);
   soloClaves(l, ["codigo", "libre", "precio", "cantidad", "notas"], donde);
   if ((l.codigo === undefined) === (l.libre === undefined))
@@ -45,7 +46,7 @@ export function validarLinea(l, i) {
     if (!esObjeto(l.libre)) throw malo(`${donde}.libre debe ser un objeto`);
     item = { libre: l.libre };
   }
-  // Precio propio de una línea del catálogo (cambia el del catálogo solo en este pedido). Las líneas
+  // Precio propio de una línea del catálogo (cambia el del catálogo solo en ese ítem). Las líneas
   // libres llevan su precio dentro de `libre`.
   let precio;
   if (l.precio !== undefined) {
@@ -68,7 +69,7 @@ function validarPrecio(v, nombre) {
 
 export function validarLineas(lineas) {
   if (!Array.isArray(lineas) || !lineas.length || lineas.length > MAX_LINEAS)
-    throw malo(`lineas: una lista de 1 a ${MAX_LINEAS} elementos`);
+    throw malo(`items: una lista de 1 a ${MAX_LINEAS} elementos`);
   return lineas.map(validarLinea);
 }
 
@@ -86,7 +87,7 @@ export function validarEntrega(e) {
 // Alta: el canal decide qué se exige (salón: mesa; llevar: a nombre de quién; delivery: entrega)
 export function validarCreacion(b) {
   if (!esObjeto(b)) throw malo("el cuerpo debe ser un objeto");
-  soloClaves(b, ["canal", "mesa", "referencia", "entrega", "clienteId", "notas", "lineas"], "pedido");
+  soloClaves(b, ["canal", "mesa", "referencia", "entrega", "clienteId", "notas", "items"], "pedido");
   if (!CANALES.includes(b.canal)) throw malo(`canal: uno de ${CANALES.join(", ")}`);
   const mesa = textoOpcional(b.mesa, 20, "mesa") ?? null;
   const referencia = textoOpcional(b.referencia, 60, "referencia") ?? null;
@@ -110,20 +111,26 @@ export function validarCreacion(b) {
     entrega,
     clienteId: b.clienteId ?? null,
     notas: textoOpcional(b.notas, 500, "notas") ?? null,
-    lineas: validarLineas(b.lineas),
+    items: validarLineas(b.items),
   };
+}
+
+// Pedir más ítems en un pedido abierto: { items: [...] }
+export function validarItems(b) {
+  if (!esObjeto(b)) throw malo("el cuerpo debe ser un objeto");
+  soloClaves(b, ["items"], "item");
+  return validarLineas(b.items);
 }
 
 // Edición: undefined no toca el campo; el canal no cambia (cambiaría las reglas del pedido)
 export function validarEdicion(b) {
   if (!esObjeto(b)) throw malo("el cuerpo debe ser un objeto");
-  soloClaves(b, ["mesa", "referencia", "entrega", "notas", "lineas"], "edición");
+  soloClaves(b, ["mesa", "referencia", "entrega", "notas"], "edición");
   const cambio = {};
   if (b.mesa !== undefined) cambio.mesa = textoOpcional(b.mesa, 20, "mesa");
   if (b.referencia !== undefined) cambio.referencia = textoOpcional(b.referencia, 60, "referencia");
   if (b.entrega !== undefined) cambio.entrega = b.entrega === null ? null : validarEntrega(b.entrega);
   if (b.notas !== undefined) cambio.notas = textoOpcional(b.notas, 500, "notas");
-  if (b.lineas !== undefined) cambio.lineas = validarLineas(b.lineas);
   if (!Object.keys(cambio).length) throw malo("no hay nada que cambiar");
   return cambio;
 }

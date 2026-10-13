@@ -1,6 +1,6 @@
 # restaurante
 
-Servicio restaurante sobre la base común (`core`). Paso 5 de la pieza 5: documento `pedido`, sus rutas y el **front de Pedidos** (React + Vite, `client/`). Faltan la pantalla de cocina, mesas, croquis, carta, método de pago y seguimiento de delivery (ver `arquitectura.md`, 5.18).
+Servicio restaurante sobre la base común (`core`). Paso 5 de la pieza 5: pedidos (`pedido`, `PD-`) e ítems (`doc_item`, `DOC_ITEM-`), sus rutas y el **front** con pantalla de Cocina (React + Vite, `client/`). Faltan mesas, croquis, carta, método de pago y seguimiento de delivery (ver `arquitectura.md`, 5.18).
 
 No abre conexiones: el gateway le pasa el núcleo.
 
@@ -12,29 +12,35 @@ gateway.use("/restaurante", createRouter({ core }));
 
 `package.json` del gateway: `npm install github:Hector3008/restaurante`.
 
-## Pedido
+## Pedidos e ítems
 
-Un solo documento (`tipo: "pedido"`, código `PD-0000001`) con estados `abierta → en_cocina → lista → entregada → pagada`, y `anulada` (con motivo) como salida desde cualquier estado antes de pagada.
+Dos tipos de documento separados. Necesita `core` con prefijos de hasta 12 caracteres (`DOC_ITEM`):
 
-| Paso | Ruta | Estación que pide el motor |
+- **`doc_item`** (`DOC_ITEM-0000001`): **un ítem** (cantidad, notas, subtotal). Estados `en_cocina → lista → entregado`, y `anulado` (con motivo). Se mueve ítem por ítem.
+- **`pedido`** (`PD-0000001`): agrupa los ítems de una persona o mesa. Se abre al pedir el primer ítem y sigue `abierto` hasta que se paga todo (`pagado`) o se anula (`anulado`, con motivo). Guarda canal, mesa, referencia, entrega y notas, y los códigos de sus ítems (`codigosItems`).
+
+| Acción | Ruta | Permiso/estación |
 |---|---|---|
-| Enviar a cocina | `POST /pedidos/:code/enviar` | `estacion:creacion` |
-| Marcar lista | `POST /pedidos/:code/lista` | `estacion:cocina` |
-| Entregar | `POST /pedidos/:code/entregar` | ninguna (la ruta exige `documento:editar`) |
+| Abrir pedido con sus primeros ítems | `POST /pedidos` | ninguna (la ruta exige `documento:editar`) |
+| Pedir más ítems | `POST /pedidos/:code/items` | ídem |
+| Editar datos | `PUT /pedidos/:code` | ídem |
 | Cobrar | `POST /pedidos/:code/cobrar` | `estacion:administracion` |
-| Anular | `POST /pedidos/:code/anular` `{ motivo: { codigo, detalle? } }` | `estacion:administracion` |
+| Anular pedido (anula también sus ítems) | `POST /pedidos/:code/anular` `{ motivo }` | `estacion:administracion` |
+| Marcar ítem listo | `POST /items/:code/lista` | `estacion:cocina` |
+| Entregar ítem | `POST /items/:code/entregar` | ninguna |
+| Anular ítem | `POST /items/:code/anular` `{ motivo }` | `estacion:creacion`; si ya no está en cocina, además `estacion:administracion` |
 
-Además: `GET /pedidos`, `GET /pedidos/:code` (`?version=`), `POST /pedidos`, `PUT /pedidos/:code`. Todas las que escriben exigen `x-requested-with`.
+Lecturas: `GET /pedidos`, `GET /pedidos/:code`, `GET /items` (ítems con su pedido; `?estado=`), `GET /items/:code`. Las que escriben exigen `x-requested-with`.
 
-Canales: `salon` (exige `mesa`), `llevar` (exige `referencia`), `delivery` (exige `entrega: { direccion, telefono }`). Las líneas son `{ codigo, precio?, cantidad?, notas? }` o `{ libre: {...}, cantidad?, notas? }`; el servidor copia nombre y precio del catálogo al `snapshot` y calcula los importes (el cliente no los manda).
+Cobrar exige que no queden ítems en cocina ni listos y que haya al menos uno entregado; guarda el total. Totales en céntimos, sin contar anulados; `null` si algún ítem no tiene precio. Crear/agregar no es transaccional: si algo falla a medias, los ítems ya creados quedan vinculados.
 
-**Precio propio** (`precio` en una línea del catálogo): cambia el precio solo en ese pedido. Exige `estacion:administracion`; el snapshot guarda `precioCatalogo` (el original) y `precioModificado: true`. Al editar, repetir el mismo precio que el pedido ya tenía no pide el permiso; omitir `precio` devuelve la línea al precio del catálogo. En una línea libre el precio va dentro de `libre` y no pide permiso. Hasta 2 decimales, mínimo 0.
+**Precio propio** (`precio` en una línea del catálogo): cambia el precio solo en ese ítem. Exige `estacion:administracion`; el snapshot guarda `precioCatalogo` y `precioModificado: true`. En una línea libre el precio va dentro de `libre` y no pide permiso. Hasta 2 decimales, mínimo 0.
 
-## Front de Pedidos
+## Front de Pedidos y Cocina
 
 `client/` (React + Vite, como `cuenta`) con `client/dist` **commiteado**. `createRouter` lo sirve en la raíz del montaje, junto a la API: `<base>/restaurante/`. El cliente pide la API en relativo (`../restaurante/pedidos`, `../auth/yo`, `../catalogo/`), así que **debe montarse en `<base>/restaurante/`** (sin la barra final redirige). Mismo origen que el gateway: la cookie `sid` funciona sin CORS.
 
-Sin enrutador: lista · nuevo · detalle · editar. Si no hay sesión, hay que cambiar la contraseña temporal o falta elegir empresa, manda a `cuenta` (`../cuenta/`). Ítems del catálogo (búsqueda por código o nombre) o libres, en los tres canales; el servidor copia nombre y precio y calcula los importes (el front solo muestra una estimación). Cada botón se muestra según los permisos y la estación del paso (`client/src/pedidos.js`, `accionesDe`): ocultarlo **no es seguridad**, el servicio y el motor siguen comprobando.
+Sin enrutador: lista de pedidos · nueva · detalle · pedir más · cocina (`#cocina`). La lista muestra los ítems de cada pedido con entrega rápida; Cocina muestra **una tarjeta por ítem** con botón «Listo» (sondeo cada 10 s). Si no hay sesión, hay que cambiar la contraseña temporal o falta elegir empresa, manda a `cuenta` (`../cuenta/`). Ítems del catálogo o libres, en los tres canales; el servidor copia nombre y precio y calcula los importes. Cada botón se muestra según permisos y estación (`client/src/pedidos.js`, `accionesItem`/`accionesPedido`): ocultarlo **no es seguridad**.
 
 ```
 npm run build   # instala y compila client/ → client/dist (commitearlo)

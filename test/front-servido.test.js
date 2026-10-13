@@ -53,8 +53,8 @@ describe("front del restaurante servido por createRouter", () => {
     assert.match(r.headers.get("location"), /\/restaurante\/$/);
   });
 
-  it("la API sigue siendo la API: /pedidos pasa por la autenticación, no por los archivos estáticos", async () => {
-    const r = await fetch(`${url}/restaurante/pedidos`);
+  it("la API sigue siendo la API: /items pasa por la autenticación, no por los archivos estáticos", async () => {
+    const r = await fetch(`${url}/restaurante/items`);
     assert.equal(r.status, 401);
   });
 });

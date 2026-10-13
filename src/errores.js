@@ -1,9 +1,10 @@
 // Errores del servicio restaurante. `codigo` identifica el caso y `status` es el HTTP que le toca.
-//   DATOS_INVALIDOS 400   PERMISO_INSUFICIENTE 403   NO_ENCONTRADO 404
+//   DATOS_INVALIDOS 400   PERMISO_INSUFICIENTE 403   NO_ENCONTRADO 404   ESTADO_INVALIDO 409
 const STATUS = {
   DATOS_INVALIDOS: 400,
   PERMISO_INSUFICIENTE: 403,
   NO_ENCONTRADO: 404,
+  ESTADO_INVALIDO: 409,
 };
 
 export class ErrorPedido extends Error {

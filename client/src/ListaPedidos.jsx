@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
-import { CANALES, ESTADOS, FILTROS, accionesDe, destinoDe, formatoDinero } from "./pedidos.js";
+import {
+  CANALES,
+  ESTADOS_PEDIDO,
+  ESTADOS_ITEM,
+  FILTROS,
+  accionesPedido,
+  accionesItem,
+  destinoDe,
+  formatoDinero,
+  permite,
+  resumenItems,
+} from "./pedidos.js";
 
-const REFRESCO_MS = 20000;
+const REFRESCO_MS = 15000;
 
-export default function ListaPedidos({ permisos, puedeCrear, alAbrir, alCrear }) {
-  const [filtro, setFiltro] = useState("activos");
+// Los pedidos: cada una agrupa los ítems (ítems) de una mesa o persona hasta que se paga toda. Cada
+// ítem se mueve solo; aquí se ve en qué va cada uno y se puede entregar el que ya está listo sin entrar.
+export default function ListaPedidos({ permisos, alCocina, alAbrir, alCrear }) {
+  const [filtro, setFiltro] = useState("abierto");
   const [pedidos, setPedidos] = useState(null);
   const [error, setError] = useState("");
   const [actualizando, setActualizando] = useState(false);
-  const [moviendo, setMoviendo] = useState(null); // code del pedido que se está moviendo
+  const [moviendo, setMoviendo] = useState(null); // code del ítem o del pedido en curso
   const filtroRef = useRef(filtro);
   filtroRef.current = filtro;
 
@@ -17,17 +30,17 @@ export default function ListaPedidos({ permisos, puedeCrear, alAbrir, alCrear })
     if (!silencioso) setActualizando(true);
     const f = FILTROS.find((x) => x.id === filtroRef.current);
     try {
-      const lista = await api.listar(f.estado);
+      const lista = await api.pedidos.listar(f.estado);
       if (filtroRef.current === f.id) {
         setPedidos([...lista].sort((a, b) => String(b.code).localeCompare(String(a.code))));
-        setError("");
+        if (!silencioso) setError("");
       }
     } catch (e) {
-      if (!silencioso || !pedidos) setError(mensajeDeError(e));
+      if (!silencioso) setError(mensajeDeError(e));
     } finally {
       setActualizando(false);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setPedidos(null);
@@ -42,21 +55,23 @@ export default function ListaPedidos({ permisos, puedeCrear, alAbrir, alCrear })
     return () => clearInterval(id);
   }, [cargar]);
 
-  // Paso rápido desde la tarjeta. Lleva la versión que se ve: si alguien cambió el pedido antes, el
-  // servidor responde 409 y se recarga la lista para ver lo último (mismo criterio que en el detalle).
-  async function mover(p, ruta) {
+  // Una acción rápida lleva la versión que se ve: si otra persona cambió algo antes, el servidor responde
+  // 409 y la lista se recarga con lo último.
+  async function ejecutar(clave, texto, fn) {
     if (moviendo) return;
-    setMoviendo(p.code);
+    setMoviendo(clave);
     setError("");
     try {
-      await api.paso(p.code, ruta, { esperaVersion: p.version });
+      await fn();
     } catch (e) {
-      setError(`${p.code}: ${mensajeDeError(e)}`);
+      setError(`${texto}: ${mensajeDeError(e)}`);
     } finally {
       await cargar(true);
       setMoviendo(null);
     }
   }
+  const pasoItem = (c, i, ruta) => ejecutar(i.code, `${c.code}`, () => api.items.paso(i.code, ruta, { esperaVersion: i.version }));
+  const cobrar = (c) => ejecutar(c.code, `${c.code}`, () => api.pedidos.cobrar(c.code, { esperaVersion: c.version }));
 
   return (
     <section aria-labelledby="t-pedidos">
@@ -66,10 +81,11 @@ export default function ListaPedidos({ permisos, puedeCrear, alAbrir, alCrear })
           <button type="button" className="rs-btn" onClick={() => cargar()} disabled={actualizando}>
             {actualizando ? "Actualizando…" : "Actualizar"}
           </button>
-          {puedeCrear && (
-            <button type="button" className="rs-btn rs-btn--primario" onClick={alCrear}>
-              Nuevo pedido
-            </button>
+          {alCocina && permite(permisos, "estacion:cocina") && (
+            <button type="button" className="rs-btn" onClick={alCocina}>Cocina</button>
+          )}
+          {permite(permisos, "documento:crear") && (
+            <button type="button" className="rs-btn rs-btn--primario" onClick={alCrear}>Nuevo pedido</button>
           )}
         </div>
       </header>
@@ -94,39 +110,55 @@ export default function ListaPedidos({ permisos, puedeCrear, alAbrir, alCrear })
       {pedidos === null && !error ? (
         <p className="cargando">Cargando…</p>
       ) : pedidos?.length === 0 ? (
-        <p className="rs-vacio">No hay pedidos en este estado.</p>
+        <p className="rs-vacio">No hay pedidos {FILTROS.find((f) => f.id === filtro).titulo.toLowerCase()}.</p>
       ) : (
         <ul className="rs-lista">
-          {(pedidos ?? []).map((p) => {
-            const { pasos } = accionesDe(p.estado, permisos);
+          {(pedidos ?? []).map((c) => {
+            const r = resumenItems(c.items);
+            const acc = accionesPedido(c, permisos);
             return (
-              <li key={p.code} className="rs-tarjeta-caja">
-                <button type="button" className="rs-tarjeta" onClick={() => alAbrir(p.code)}>
+              <li key={c.code} className="rs-tarjeta-caja">
+                <button type="button" className="rs-tarjeta" onClick={() => alAbrir(c.code)}>
                   <span className="rs-tarjeta__fila">
-                    <strong>{p.code}</strong>
-                    <span className={`rs-estado rs-estado--${p.estado}`}>{ESTADOS[p.estado] ?? p.estado}</span>
+                    <strong>{destinoDe(c) || c.code}</strong>
+                    <span className={`rs-estado rs-estado--${c.estado}`}>{ESTADOS_PEDIDO[c.estado] ?? c.estado}</span>
                   </span>
                   <span className="rs-tarjeta__fila">
-                    <span>{destinoDe(p)}</span>
-                    <span className="rs-num">{formatoDinero(p.total, p.moneda)}</span>
+                    <small>{c.code} · {CANALES[c.canal] ?? c.canal}</small>
+                    <span className="rs-num">{formatoDinero(c.total, c.moneda)}</span>
                   </span>
-                  <small>
-                    {p.creadoTs ? new Date(p.creadoTs).toLocaleString("es", { dateStyle: "short", timeStyle: "short" }) : CANALES[p.canal] ?? p.canal}
-                  </small>
                 </button>
-                {pasos.length > 0 && (
+
+                {c.items && c.items.length > 0 && (
+                  <ul className="rs-mini">
+                    {c.items.map((i) => {
+                      const { pasos } = accionesItem(i.estado, permisos);
+                      // En la lista solo se entrega lo que ya está listo; marcar listo es de la pantalla de cocina
+                      const entregar = pasos.find((p) => p.id === "entregar");
+                      return (
+                        <li key={i.code} className={i.estado === "anulado" ? "rs-mini__item rs-mini__item--anulado" : "rs-mini__item"}>
+                          <span>{i.cantidad} × {i.nombre}</span>
+                          <span className={`rs-estado rs-estado--${i.estado}`}>{ESTADOS_ITEM[i.estado] ?? i.estado}</span>
+                          {entregar && (
+                            <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo !== null} onClick={() => pasoItem(c, i, "entregar")}>
+                              {moviendo === i.code ? "…" : "Entregar"}
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {c.estado === "abierto" && r.activos > 0 && (
                   <div className="rs-tarjeta__acciones">
-                    {pasos.map((paso) => (
-                      <button
-                        key={paso.id}
-                        type="button"
-                        className="rs-btn rs-btn--primario"
-                        disabled={moviendo !== null}
-                        onClick={() => mover(p, paso.id)}
-                      >
-                        {moviendo === p.code ? "Enviando…" : paso.etiqueta}
+                    {acc.puedeCobrarAhora ? (
+                      <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo !== null} onClick={() => cobrar(c)}>
+                        {moviendo === c.code ? "Cobrando…" : `Cobrar ${formatoDinero(c.total, c.moneda)}`}
                       </button>
-                    ))}
+                    ) : (
+                      <small className="rs-vacio">{r.enCocina + r.listos > 0 ? `${r.entregados + r.listos}/${r.activos} listos o entregados` : ""}</small>
+                    )}
                   </div>
                 )}
               </li>

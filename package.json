@@ -4,8 +4,13 @@
   "description": "Servicio restaurante: pedidos sobre la base común (core)",
   "main": "src/index.js",
   "type": "module",
-  "engines": { "node": ">=22" },
-  "files": ["src", "client/dist"],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "client/dist"
+  ],
   "scripts": {
     "build": "npm --prefix client install && npm --prefix client run build",
     "dev": "npm --prefix client run dev",
