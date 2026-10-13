@@ -36,6 +36,7 @@ function responder(res, e, next) {
  *   GET  /items/:code                                   documento:leer
  *   POST /items/:code/lista                             documento:editar + estación cocina (el motor)
  *   POST /items/:code/entregar                          documento:editar
+ *   POST /items/:code/precio  { precio }                documento:editar + estación administración (solo el precio)
  *   POST /items/:code/anular  { motivo }                documento:editar (+ administración si ya salió de cocina)
  */
 export function montarRutas(router, core, servicio) {
@@ -142,6 +143,14 @@ export function montarRutas(router, core, servicio) {
   pasoItem("lista", "marcarLista", "cocina");
   pasoItem("entregar", "entregar", "creacion");
   pasoItem("anular", "anular", "creacion");
+  router.post(
+    "/items/:code/precio",
+    ...editar("administracion"),
+    envolver(true, async (req, res) => {
+      const { esperaVersion, ...cuerpo } = req.body ?? {};
+      res.status(200).json(await items.cambiarPrecio({ ...base(req), code: req.params.code, esperaVersion, ...cuerpo }));
+    }),
+  );
 
   return router;
 }

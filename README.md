@@ -28,13 +28,14 @@ Dos tipos de documento separados. Necesita `core` con prefijos de hasta 12 carac
 | Anular pedido (anula también sus ítems) | `POST /pedidos/:code/anular` `{ motivo }` | `estacion:administracion` |
 | Marcar ítem listo | `POST /items/:code/lista` | `estacion:cocina` |
 | Entregar ítem | `POST /items/:code/entregar` | ninguna |
+| Corregir el precio de un ítem (sin anularlo) | `POST /items/:code/precio` `{ precio }` | `estacion:administracion` |
 | Anular ítem | `POST /items/:code/anular` `{ motivo }` | `estacion:creacion`; si ya no está en cocina, además `estacion:administracion` |
 
 Lecturas: `GET /pedidos`, `GET /pedidos/:code`, `GET /items` (ítems con su pedido; `?estado=`), `GET /items/:code`. Las que escriben exigen `x-requested-with`.
 
 Cobrar exige que no queden ítems en cocina ni listos y que haya al menos uno entregado; guarda el total. Totales en céntimos, sin contar anulados; `null` si algún ítem no tiene precio. Crear/agregar no es transaccional: si algo falla a medias, los ítems ya creados quedan vinculados.
 
-**Precio propio** (`precio` en una línea del catálogo): cambia el precio solo en ese ítem. Exige `estacion:administracion`; el snapshot guarda `precioCatalogo` y `precioModificado: true`. En una línea libre el precio va dentro de `libre` y no pide permiso. Hasta 2 decimales, mínimo 0.
+**Precio propio** (`precio` en una línea del catálogo): cambia el precio solo en ese ítem. Exige `estacion:administracion`; el snapshot guarda `precioCatalogo` y `precioModificado: true`. En una línea libre el precio va dentro de `libre` y no pide permiso. Para corregirlo **después** (un ítem sin precio, o uno equivocado) está `POST /items/:code/precio`: vale en cualquier estado vivo del ítem mientras el pedido esté abierto, solo cambia el precio (cantidad, notas y qué ítem siguen sin editarse: se anula y se pide otro) y el total del pedido se recalcula. Hasta 2 decimales, mínimo 0.
 
 ## Front de Pedidos y Cocina
 

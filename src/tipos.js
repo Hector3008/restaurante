@@ -37,8 +37,9 @@ export const TIPO_ITEM = Object.freeze({
     anulado: "estacion:creacion",
   },
   motivos: { anulado: MOTIVOS_ANULACION },
-  // Un ítem no se edita: si se equivocó, se anula y se pide otro (así cocina nunca prepara algo que cambió)
-  editables: [],
+  // Lo que cocina prepara no se edita (cantidad, notas, qué ítem): si se equivocó, se anula y se pide otro.
+  // Lo único que cambia sobre un ítem vivo es su precio (administración): el servicio no admite otra edición.
+  editables: ["en_cocina", "lista", "entregado"],
 });
 
 export const TIPO_PEDIDO = Object.freeze({

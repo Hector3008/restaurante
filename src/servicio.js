@@ -5,6 +5,7 @@ import {
   validarCreacion,
   validarEdicion,
   validarItems,
+  validarCambioPrecio,
   validarCoherencia,
   calcularTotales,
 } from "./validacion.js";
@@ -354,6 +355,37 @@ export function crearServicio(core) {
     });
   }
 
+  // Corrige el precio de un ítem sin anularlo (el que se cargó sin precio, o con uno equivocado). Solo el precio:
+  // lo que cocina prepara no cambia. Pide estacion:administracion, igual que poner un precio propio al pedirlo.
+  // Vale mientras el pedido esté abierto y el ítem no esté anulado; el total del pedido se recalcula solo.
+  async function cambiarPrecio({ empresaId, actor, code, esperaVersion, ...cuerpo }) {
+    exigir(actor, "documento:editar");
+    exigir(actor, "estacion:administracion");
+    const precio = validarCambioPrecio(cuerpo);
+    return await conEmpresa(empresaId, async () => {
+      const item = await cargarItem(code);
+      const pedido = await cargarPedido(item.payload.doc.pedidoCode);
+      if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
+      if (item.estado === "anulado") throw new ErrorPedido("ESTADO_INVALIDO", "un ítem anulado no cambia de precio");
+      const s = item.snapshot?.item ?? {};
+      const nuevo = { ...s, precio };
+      if (s.origen !== "libre") {
+        const original = s.precioModificado ? s.precioCatalogo ?? null : s.precio ?? null;
+        nuevo.precioCatalogo = original;
+        nuevo.precioModificado = precio !== original;
+      }
+      const { subtotales } = calcularTotales([nuevo], [item.payload.doc.cantidad]);
+      const d = await documentos.nuevaVersion({
+        code,
+        doc: { ...item.payload.doc, subtotal: subtotales[0] },
+        snapshot: { ...item.snapshot, item: nuevo },
+        usuarioId: actor.usuarioId,
+        esperaVersion: esperaVersion ?? item.version,
+      });
+      return completoItem(d);
+    });
+  }
+
   return {
     pedidos: {
       crear: crearPedido,
@@ -370,6 +402,7 @@ export function crearServicio(core) {
       marcarLista: (p) => mover({ ...p, a: "lista" }),
       entregar: (p) => mover({ ...p, a: "entregado" }),
       anular: (p) => mover({ ...p, a: "anulado" }),
+      cambiarPrecio,
     },
   };
 }

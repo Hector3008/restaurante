@@ -7,6 +7,7 @@ import {
   MOTIVOS_ANULACION,
   accionesPedido,
   accionesItem,
+  cuerpoPrecio,
   destinoDe,
   formatoDinero,
 } from "./pedidos.js";
@@ -28,6 +29,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   const [error, setError] = useState("");
   const [trabajando, setTrabajando] = useState(false);
   const [anulando, setAnulando] = useState(null); // { tipo: "pedido" } | { tipo: "ítem", ítem }
+  const [editandoPrecio, setEditandoPrecio] = useState(null); // { code, texto }
   const [motivo, setMotivo] = useState("");
   const [detalleMotivo, setDetalleMotivo] = useState("");
 
@@ -53,6 +55,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
     try {
       await fn();
       setAnulando(null);
+      setEditandoPrecio(null);
       setMotivo("");
       setDetalleMotivo("");
       await cargar();
@@ -105,7 +108,8 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       <h2 className="rs-subtitulo">Ítems</h2>
       <ul className="rs-lineas">
         {c.items.map((i) => {
-          const { pasos, anular } = accionesItem(i.estado, permisos);
+          const { pasos, anular, precio } = accionesItem(i.estado, permisos);
+          const nuevoPrecio = editandoPrecio?.code === i.code ? cuerpoPrecio(editandoPrecio.texto) : null;
           const enPedidoAbierto = c.estado === "abierto";
           return (
             <li key={i.code} className={i.estado === "anulado" ? "rs-linea rs-linea--anulado" : "rs-linea"}>
@@ -122,13 +126,42 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                 <small>Precio cambiado: {formatoDinero(i.precio, moneda)} (catálogo: {formatoDinero(i.precioCatalogo, moneda)})</small>
               )}
               {i.notas && <small>{i.notas}</small>}
-              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular) && (
+              {enPedidoAbierto && precio && editandoPrecio?.code === i.code && (
+                <form
+                  className="rs-precio"
+                  onSubmit={(ev) => {
+                    ev.preventDefault();
+                    if (nuevoPrecio.ok) ejecutar(() => api.items.paso(i.code, "precio", { precio: nuevoPrecio.precio, esperaVersion: i.version }));
+                  }}
+                >
+                  <label>
+                    <span>Precio</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      autoFocus
+                      value={editandoPrecio.texto}
+                      aria-invalid={editandoPrecio.texto !== "" && !nuevoPrecio.ok}
+                      onChange={(ev) => setEditandoPrecio({ code: i.code, texto: ev.target.value })}
+                    />
+                  </label>
+                  <button type="submit" className="rs-btn rs-btn--primario" disabled={trabajando || !nuevoPrecio.ok}>Guardar</button>
+                  <button type="button" className="rs-btn" onClick={() => setEditandoPrecio(null)}>Cancelar</button>
+                  {editandoPrecio.texto !== "" && !nuevoPrecio.ok && <small className="rs-precio__aviso" role="alert">{nuevoPrecio.error}</small>}
+                </form>
+              )}
+              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || (precio && editandoPrecio?.code !== i.code)) && (
                 <div className="rs-acciones">
                   {pasos.filter((p) => p.id === "entregar").map((p) => (
                     <button key={p.id} type="button" className="rs-btn rs-btn--primario" disabled={trabajando} onClick={() => ejecutar(() => api.items.paso(i.code, p.id, { esperaVersion: i.version }))}>
                       {p.etiqueta}
                     </button>
                   ))}
+                  {precio && editandoPrecio?.code !== i.code && (
+                    <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setEditandoPrecio({ code: i.code, texto: i.precio ?? "" })}>
+                      {i.precio === null ? "Poner precio" : "Cambiar precio"}
+                    </button>
+                  )}
                   {anular && (
                     <button type="button" className="rs-btn rs-btn--peligro" disabled={trabajando} onClick={() => setAnulando({ tipo: "item", item: i })}>
                       Anular

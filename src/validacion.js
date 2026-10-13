@@ -67,6 +67,14 @@ function validarPrecio(v, nombre) {
   return v;
 }
 
+// Cambiar el precio de un ítem ya pedido: { precio } (obligatorio; para dejarlo sin precio se anula y se pide otro)
+export function validarCambioPrecio(b) {
+  if (!b || typeof b !== "object" || Array.isArray(b)) throw malo("el cuerpo debe ser un objeto");
+  soloClaves(b, ["precio"], "cuerpo");
+  if (b.precio === undefined || b.precio === null) throw malo("precio es obligatorio");
+  return validarPrecio(b.precio, "precio");
+}
+
 export function validarLineas(lineas) {
   if (!Array.isArray(lineas) || !lineas.length || lineas.length > MAX_LINEAS)
     throw malo(`items: una lista de 1 a ${MAX_LINEAS} elementos`);

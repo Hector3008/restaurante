@@ -161,7 +161,7 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       assert.deepEqual(d.doc.codigosItems, ["DOC_ITEM-0000001", "DOC_ITEM-0000002"]);
     });
 
-    it("no se agregan a un pedido que ya no está abierto, ni a una que no existe", async () => {
+    it("no se agregan a un pedido que ya no está abierto, ni a uno que no existe", async () => {
       nuevo();
       const c = await abrir([{ codigo: "CAFE-1" }]);
       await svc.items.marcarLista(m(COCINA, "DOC_ITEM-0000001"));
@@ -230,7 +230,7 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       await assert.rejects(svc.items.anular(m(MESERO, "DOC_ITEM-0000001", {})), cod("MOTIVO_REQUERIDO"));
     });
 
-    it("un ítem anulado no pedido en el total", async () => {
+    it("un ítem anulado no cuenta en el total", async () => {
       nuevo();
       const c = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
       await svc.items.anular(m(MESERO, "DOC_ITEM-0000002", { motivo }));
@@ -254,6 +254,77 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       assert.deepEqual(enCocina.map((p) => [p.code, p.nombre, p.pedido.referencia]), [["DOC_ITEM-0000002", "Sándwich", "Ana"]]);
       const todos = await svc.items.listar({ empresaId: E, actor: COCINA });
       assert.equal(todos.find((p) => p.code === "DOC_ITEM-0000001").pedido.mesa, "4");
+    });
+  });
+
+  describe("corregir el precio de un ítem sin anularlo", () => {
+    const precio = (actor, code, p, extra = {}) => svc.items.cambiarPrecio(m(actor, code, { precio: p, ...extra }));
+
+    it("administración le pone precio a un ítem que se cargó sin él, y el total del pedido se recalcula", async () => {
+      nuevo();
+      const c = await abrir([{ codigo: "SINPRECIO", cantidad: 2 }, { codigo: "CAFE-1" }]);
+      assert.equal(c.total, null);
+      const i = await precio(CAJERO, "DOC_ITEM-0000001", 4.5);
+      assert.deepEqual([i.precio, i.subtotal, i.version], [4.5, 9, 2]);
+      assert.equal(i.estado, "en_cocina"); // no se movió ni se anuló
+      assert.equal((await svc.pedidos.obtener(m(MESERO, c.code))).total, 15.5);
+    });
+
+    it("guarda el precio del catálogo como original; volver a él deja de marcarlo como cambiado", async () => {
+      nuevo();
+      await abrir([{ codigo: "CAFE-1" }]);
+      const a = await precio(CAJERO, "DOC_ITEM-0000001", 5);
+      assert.deepEqual([a.precio, a.precioCatalogo, a.precioModificado], [5, 6.5, true]);
+      const b = await precio(CAJERO, "DOC_ITEM-0000001", 6.5);
+      assert.deepEqual([b.precio, b.precioCatalogo, b.precioModificado], [6.5, 6.5, false]);
+    });
+
+    it("un ítem libre cambia su precio sin marcarse como modificado", async () => {
+      nuevo();
+      await abrir([{ libre: { nombre: "Torta del día", precio: 5 } }]);
+      const i = await precio(CAJERO, "DOC_ITEM-0000001", 7);
+      assert.deepEqual([i.precio, i.subtotal, i.precioModificado], [7, 7, false]);
+    });
+
+    it("funciona en cualquier estado vivo del ítem (en cocina, lista, entregado)", async () => {
+      nuevo();
+      await abrir([{ codigo: "CAFE-1" }]);
+      await svc.items.marcarLista(m(COCINA, "DOC_ITEM-0000001"));
+      assert.equal((await precio(CAJERO, "DOC_ITEM-0000001", 6)).estado, "lista");
+      await svc.items.entregar(m(MESERO, "DOC_ITEM-0000001"));
+      assert.equal((await precio(CAJERO, "DOC_ITEM-0000001", 7)).estado, "entregado");
+    });
+
+    it("pide la estación de administración; quien solo toma ítems no puede", async () => {
+      nuevo();
+      await abrir([{ codigo: "SINPRECIO" }]);
+      await assert.rejects(precio(MESERO, "DOC_ITEM-0000001", 3), cod("PERMISO_INSUFICIENTE"));
+      await assert.rejects(precio(SOLO_LEER, "DOC_ITEM-0000001", 3), cod("PERMISO_INSUFICIENTE"));
+    });
+
+    it("no se cambia en un ítem anulado ni cuando el pedido ya no está abierto", async () => {
+      nuevo();
+      const c = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
+      await svc.items.anular(m(MESERO, "DOC_ITEM-0000002", { motivo }));
+      await assert.rejects(precio(CAJERO, "DOC_ITEM-0000002", 1), cod("ESTADO_INVALIDO"));
+      await svc.items.marcarLista(m(COCINA, "DOC_ITEM-0000001"));
+      await svc.items.entregar(m(MESERO, "DOC_ITEM-0000001"));
+      await svc.pedidos.cobrar(m(CAJERO, c.code));
+      await assert.rejects(precio(CAJERO, "DOC_ITEM-0000001", 1), cod("ESTADO_INVALIDO"));
+    });
+
+    it("valida el precio y protege con la versión esperada", async () => {
+      nuevo();
+      await abrir([{ codigo: "CAFE-1" }]);
+      for (const malo of [undefined, null, -1, 1.234, "5", NaN])
+        await assert.rejects(precio(CAJERO, "DOC_ITEM-0000001", malo), cod("DATOS_INVALIDOS"));
+      await assert.rejects(svc.items.cambiarPrecio(m(CAJERO, "DOC_ITEM-0000001", { precio: 3, otro: 1 })), cod("DATOS_INVALIDOS"));
+      await assert.rejects(precio(CAJERO, "DOC_ITEM-0000001", 3, { esperaVersion: 9 }), cod("CONFLICTO_VERSION"));
+    });
+
+    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existe el precio", () => {
+      nuevo();
+      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
     });
   });
 
@@ -324,7 +395,7 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
   });
 
   describe("datos del pedido", () => {
-    it("editar cambia mesa y notas, usa la versión esperada y no dejal pedido incoherente", async () => {
+    it("editar cambia mesa y notas, usa la versión esperada y no deja el pedido incoherente", async () => {
       nuevo();
       const c = await abrir([{ codigo: "CAFE-1" }]);
       const e = await svc.pedidos.editar(m(MESERO, c.code, { mesa: "7", notas: "cumpleaños" }));
@@ -337,7 +408,7 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
   });
 
   describe("listar pedidos", () => {
-    it("las abiertos traen sus ítems en curso; filtra por estado", async () => {
+    it("los abiertos traen sus ítems en curso; filtra por estado", async () => {
       nuevo();
       const a = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
       await svc.pedidos.crear({ empresaId: E, actor: MESERO, canal: "llevar", referencia: "Ana", items: [{ codigo: "CAFE-1" }] });
@@ -350,7 +421,7 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       assert.deepEqual((await svc.pedidos.listar({ empresaId: E, actor: MESERO, estado: ["pagado"] })), []);
     });
 
-    it("las cerradas no cargan ítems y muestran el total guardado", async () => {
+    it("los cerrados no cargan ítems y muestran el total guardado", async () => {
       nuevo();
       const c = await abrir([{ codigo: "CAFE-1" }]);
       await svc.items.marcarLista(m(COCINA, "DOC_ITEM-0000001"));
@@ -396,6 +467,21 @@ describe("rutas del restaurante (núcleo falso)", () => {
       body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
     });
   const pedido = (extra = {}) => ({ canal: "llevar", referencia: "Ana", items: [{ codigo: "CAFE-1" }, { codigo: "SAND-1" }], ...extra });
+
+  it("POST /items/:code/precio corrige el precio sin anular; valida el cuerpo y exige x-requested-with", async () => {
+    let r = await pedir("POST", "/pedidos", pedido({ items: [{ codigo: "SINPRECIO" }] }));
+    const c = await r.json();
+    assert.equal(c.total, null);
+    const code = c.items[0].code;
+    r = await pedir("POST", `/items/${code}/precio`, { precio: 4.25, esperaVersion: c.items[0].version });
+    assert.equal(r.status, 200);
+    const i = await r.json();
+    assert.deepEqual([i.precio, i.subtotal, i.estado], [4.25, 4.25, "en_cocina"]);
+    assert.equal((await (await pedir("GET", `/pedidos/${c.code}`)).json()).total, 4.25);
+    assert.equal((await pedir("POST", `/items/${code}/precio`, { precio: "x" })).status, 400);
+    assert.equal((await pedir("POST", `/items/${code}/precio`, {}, { "x-requested-with": "" })).status, 403);
+    await pedir("POST", `/pedidos/${c.code}/anular`, { motivo: { codigo: "otro" } }); // no deja un ítem en cocina a los demás tests
+  });
 
   it("flujo: abrir pedido, más ítems, cocina, entregar, cobrar", async () => {
     let r = await pedir("POST", "/pedidos", pedido());

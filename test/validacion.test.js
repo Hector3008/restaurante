@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   validarCreacion,
   validarLineas,
+  validarCambioPrecio,
   validarEdicion,
   validarCoherencia,
   validarCode,
@@ -108,5 +109,12 @@ describe("validación de ítems", () => {
   it("la edición del pedido ya no admite ítems (se piden con validarItems)", () => {
     assert.throws(() => validarEdicion({ items: [linea] }), cod("DATOS_INVALIDOS"));
     assert.throws(() => validarEdicion({ lineas: [linea] }), cod("DATOS_INVALIDOS"));
+  });
+
+  it("cambiar el precio de un ítem: un número de 0 en adelante con 2 decimales, y nada más en el cuerpo", () => {
+    assert.equal(validarCambioPrecio({ precio: 4.5 }), 4.5);
+    assert.equal(validarCambioPrecio({ precio: 0 }), 0);
+    for (const m of [{}, { precio: null }, { precio: -1 }, { precio: 1.234 }, { precio: "5" }, { precio: 5, cantidad: 2 }, null, []])
+      assert.throws(() => validarCambioPrecio(m), cod("DATOS_INVALIDOS"));
   });
 });

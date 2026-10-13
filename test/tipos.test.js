@@ -16,7 +16,7 @@ describe("tipos de documento del restaurante", () => {
     assert.equal(p.estadoInicial, "en_cocina");
     assert.deepEqual(p.estados.sort(), ["anulado", "en_cocina", "entregado", "lista"]);
     assert.deepEqual(p.finales, ["anulado"]);
-    assert.deepEqual(p.editables, []);
+    assert.deepEqual(p.editables.sort(), ["en_cocina", "entregado", "lista"]); // solo para corregir el precio (el servicio no admite otra edición)
     const c = tipo("pedido");
     assert.equal(c.prefijo, "PD");
     assert.equal(c.estadoInicial, "abierto");
@@ -32,7 +32,7 @@ describe("tipos de documento del restaurante", () => {
     assert.ok(TIPO_PEDIDO.motivos.anulado.length > 0);
   });
 
-  it("estaciones: cocina marca lista, administración paga y anulal pedido, y entregar no pide estación", () => {
+  it("estaciones: cocina marca lista, administración paga y anula el pedido, y entregar no pide estación", () => {
     assert.equal(TIPO_ITEM.permisos.lista, "estacion:cocina");
     assert.equal(TIPO_ITEM.permisos.entregado, undefined);
     assert.equal(TIPO_PEDIDO.permisos.pagado, "estacion:administracion");

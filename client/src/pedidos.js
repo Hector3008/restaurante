@@ -203,7 +203,8 @@ const EN_CURSO = ["en_cocina", "lista"];
 /**
  * Acciones de un ítem (un ítem) según su estado y los permisos. Refleja lo que exige el servidor:
  * documento:editar en la ruta; marcar lista pide la estación de cocina; entregar no pide estación; anular
- * pide estacion:creacion mientras está en cocina y administración después. Ocultar un botón NO es seguridad.
+ * pide estacion:creacion mientras está en cocina y administración después; el precio lo corrige administración.
+ * Ocultar un botón NO es seguridad.
  */
 export function accionesItem(estado, permisos) {
   const editar = permite(permisos, "documento:editar");
@@ -213,7 +214,17 @@ export function accionesItem(estado, permisos) {
   const anular =
     editar &&
     (estado === "en_cocina" ? permite(permisos, "estacion:creacion") : ["lista", "entregado"].includes(estado) && permite(permisos, "estacion:administracion"));
-  return { pasos, anular: Boolean(anular) };
+  // Corregir el precio sin anular: administración, en cualquier estado vivo. Ocultar el botón NO es seguridad.
+  const precio = editar && estado !== "anulado" && permite(permisos, "estacion:administracion");
+  return { pasos, anular: Boolean(anular), precio: Boolean(precio) };
+}
+
+/** Lo que se envía a POST /items/:code/precio: el precio es obligatorio (para quitarlo se anula y se pide otro). */
+export function cuerpoPrecio(texto) {
+  const p = parsearPrecio(texto);
+  if (!p.ok) return { ok: false, error: "Hasta 2 decimales." };
+  if (p.valor === null) return { ok: false, error: "Escribe el precio." };
+  return { ok: true, precio: p.valor };
 }
 
 /** Cuántos ítems hay en cada estado y el total de lo que se cobra. */

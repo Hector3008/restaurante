@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { TIPO_ITEM, TIPO_PEDIDO, MOTIVOS_ANULACION as MOTIVOS_SERVICIO } from "../src/index.js";
 import { validarCreacion, validarEdicion, validarItems, validarLinea } from "../src/validacion.js";
-import {
+import { cuerpoPrecio,
   permite, ESTADOS_PEDIDO, ESTADOS_ITEM, MOTIVOS_ANULACION, FILTROS, destinoDe, formatoDinero, parsearPrecio,
   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
@@ -240,4 +240,23 @@ test("mensajeDeError: usa el texto del servicio y trata aparte sesión, conflict
   assert.equal(mensajeDeError(new ErrorApi(0, "SIN_CONEXION", "sin red")), "sin red");
   assert.match(mensajeDeError(new Error("x")), /inesperado/);
   assert.equal(urlCuenta, "/cuenta/");
+});
+
+test("accionesItem.precio: solo administración, en cualquier estado vivo, nunca en un ítem anulado", () => {
+  for (const e of ["en_cocina", "lista", "entregado"]) {
+    assert.equal(accionesItem(e, CAJERO).precio, true, e);
+    assert.equal(accionesItem(e, MESERO).precio, false, e);
+    assert.equal(accionesItem(e, COCINA).precio, false, e);
+  }
+  assert.equal(accionesItem("anulado", ["*"]).precio, false);
+  assert.equal(accionesItem("en_cocina", ["estacion:administracion"]).precio, false); // sin documento:editar la ruta lo rechaza
+});
+
+test("cuerpoPrecio: el precio es obligatorio y admite hasta 2 decimales (como el servidor)", () => {
+  assert.deepEqual(cuerpoPrecio("4,5"), { ok: true, precio: 4.5 });
+  assert.deepEqual(cuerpoPrecio(" 0 "), { ok: true, precio: 0 });
+  assert.equal(cuerpoPrecio("").ok, false);
+  assert.equal(cuerpoPrecio("1.234").ok, false);
+  assert.equal(cuerpoPrecio("abc").ok, false);
+  assert.equal(cuerpoPrecio("-1").ok, false);
 });
