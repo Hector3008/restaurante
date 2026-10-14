@@ -8,6 +8,9 @@ const BASE = new URL("../", document.baseURI).pathname;
 /** Dónde iniciar sesión, elegir empresa o cambiar la contraseña (el front de `cuenta`). */
 export const urlCuenta = BASE + "cuenta/";
 
+/** La carta pública de una empresa (la ve el cliente, sin sesión): `<base>/restaurante/catalogo/<slug>`. */
+export const urlCarta = (slug) => BASE + "restaurante/catalogo/" + encodeURIComponent(slug);
+
 export class ErrorApi extends Error {
   constructor(status, codigo, mensaje, datos) {
     super(mensaje || "Error inesperado");
@@ -57,7 +60,9 @@ export function normalizarYo(d) {
   return {
     usuario: yo.usuario ?? null,
     empresaActivaId: yo.empresaActivaId ?? yo.empresaId ?? null,
-    empresa: activa ? { nombre: activa.nombre ?? activa.empresa?.nombre ?? "", rol: activa.rol?.nombre ?? activa.rol ?? null } : null,
+    empresa: activa
+      ? { nombre: activa.nombre ?? activa.empresa?.nombre ?? "", rol: activa.rol?.nombre ?? activa.rol ?? null, slug: activa.slug ?? activa.empresa?.slug ?? null }
+      : null,
     permisos: Array.isArray(yo.permisos) ? yo.permisos : [],
     debeCambiarPassword: Boolean(yo.debeCambiarPassword ?? yo.usuario?.debeCambiarPassword),
   };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ErrorApi, mensajeDeError, urlCuenta } from "./api.js";
+import { api, ErrorApi, mensajeDeError, urlCarta, urlCuenta } from "./api.js";
 import { permite, puedeCambiarPrecio, puedeMarcarListos } from "./pedidos.js";
 import Cocina from "./Cocina.jsx";
 import ListaPedidos from "./ListaPedidos.jsx";
@@ -73,7 +73,12 @@ export default function App() {
     <main className="rs">
       <nav className="rs-barra" aria-label="Navegación">
         <a className="enlace-volver" href={urlCuenta}>← Inicio</a>
-        {yo.empresa?.nombre && <span className="rs-empresa">{yo.empresa.nombre}</span>}
+        <span className="rs-barra__der">
+          {yo.empresa?.slug && (
+            <a className="enlace-volver" href={urlCarta(yo.empresa.slug)} target="_blank" rel="noopener">Ver carta pública ↗</a>
+          )}
+          {yo.empresa?.nombre && <span className="rs-empresa">{yo.empresa.nombre}</span>}
+        </span>
       </nav>
 
       {vista.tipo === "lista" && (
