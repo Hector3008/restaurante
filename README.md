@@ -48,12 +48,22 @@ npm run build   # instala y compila client/ → client/dist (commitearlo)
 npm run dev     # Vite en :5173 con proxy al gateway (GATEWAY_URL para cambiarlo)
 ```
 
-`createRouter` falla al arrancar, con un mensaje claro, si no existe `client/dist/index.html`.
+`createRouter` falla al arrancar, con un mensaje claro, si no existe `client/dist/index.html` o `client/dist/catalogo.html`.
+
+## Carta pública y puntos (sin sesión)
+
+Vista para los **clientes**: `<base>/restaurante/catalogo/<slug-de-la-empresa>` (por ejemplo `/restaurante/catalogo/cafe-central`). Muestra la carta (ítems **activos** del catálogo, agrupados por categoría, con buscador) y los puntos acumulados del cliente. Es una segunda página del mismo `client/` (`catalogo.html`, código en `client/src/catalogo/`), compilada junto a la del personal.
+
+- **API pública** (solo GET, sin sesión, con límite de 60 consultas por minuto por IP, en memoria): `GET /publico/:empresa/carta` y `GET /publico/:empresa/cliente`. La empresa debe existir, estar activa y tener el servicio `restaurante` activo; si no, siempre el mismo 404. Solo salen código, nombre, categoría y precio: nunca `atributos` ni ítems desactivados.
+- **El cliente está hardcodeado** en `src/cliente-demo.js` (nombre, 120 puntos y 4 movimientos de ejemplo, iguales para todas las empresas). La respuesta lleva `demo: true` y la página lo avisa. Cuando exista la identidad del cliente final y la fidelización (5.11), solo se reemplaza `clienteActual()` de ese archivo.
+- **Detalle del plato:** tocar un plato abre `#/plato/<código>` (ruta por hash; «atrás» vuelve a la carta con su búsqueda y filtro). Muestra categoría, nombre, precio, **descripción** y **foto**, ambas opcionales, y las reseñas. API: `GET /publico/:empresa/plato/:codigo` (404 si no existe o está desactivado). Descripción y foto son atributos del ítem del catálogo, `DESCRIPCION` (texto) e `IMAGEN` (URL **https**); el servicio los declara con `registrarEsquema` y solo esos dos campos salen al público. Una URL que no sea https se descarta. Sin foto no se muestra recuadro. Las imágenes van únicamente en la presentación del plato: las reseñas son solo texto y estrellas.
+- **Reseñas de ejemplo** en `src/resenas-demo.js` (3, iguales para todos los platos, `demo: true`, la página lo avisa). No hay reseñas reales hasta tener identidad del cliente final y dónde guardarlas; entonces solo se reemplaza `resenasDe()`.
+- La página se sirve con `<base href>` en la raíz del montaje, así funciona con cualquier `BASE_PATH`. En desarrollo: `http://localhost:5173/catalogo.html?empresa=<slug>`.
 
 ## Pruebas
 
 ```
-npm test                                   # 49 pruebas sin base de datos (servicio, front y servido estático)
+npm test                                   # pruebas sin base de datos (servicio, front, servido estático y carta pública)
 MONGODB_URI=mongodb://localhost:27017 npm test   # suma las de MongoDB real (pedidos.test.js)
 ```
 
