@@ -27,6 +27,7 @@ function BuscadorCatalogo({ alElegir }) {
     if (!texto) {
       setResultados([]);
       setError("");
+      setBuscando(false);
       return;
     }
     let vigente = true;
@@ -50,6 +51,15 @@ function BuscadorCatalogo({ alElegir }) {
     };
   }, [q]);
 
+  // Al elegir un resultado se agrega el ítem y el buscador queda listo para el siguiente: sin texto y sin lista.
+  // Vaciar `q` también cancela cualquier búsqueda en curso (el efecto de arriba la descarta), así no reaparece.
+  function elegir(it) {
+    alElegir(it);
+    setQ("");
+    setResultados([]);
+    setError("");
+  }
+
   return (
     <div className="rs-buscador">
       <input
@@ -67,7 +77,7 @@ function BuscadorCatalogo({ alElegir }) {
         <ul className="rs-resultados">
           {resultados.map((it) => (
             <li key={it.itemId ?? it.id ?? it._id ?? it.codigo}>
-              <button type="button" onClick={() => alElegir(it)}>
+              <button type="button" onClick={() => elegir(it)}>
                 <span>
                   <strong>{it.nombre}</strong> <small>{it.codigo}</small>
                 </span>
