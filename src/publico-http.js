@@ -6,7 +6,14 @@ import { ErrorPedido } from "./errores.js";
  *   GET /catalogo/:empresa              la página (HTML) de la carta; `:empresa` es el slug
  *   GET /publico/:empresa/carta         { empresa: { nombre, slug, moneda }, categorias: [{ nombre, items }] }
  *   GET /publico/:empresa/plato/:codigo  { empresa, plato: { codigo, nombre, categoria, precio, descripcion, imagen }, resenas }
- *   GET /publico/:empresa/cliente       { demo, nombre, puntos, movimientos }   (cliente fijo por ahora)
+ *
+ * Cuenta del cliente final (con sesión propia `cs_<slug>`; los maneja core.cuentasCliente, ver core/docs/cuentas-cliente.md):
+ *   GET  /publico/:empresa/cliente                  { sesion:false } | { sesion:true, cliente, puntos }
+ *   POST /publico/:empresa/cuenta/registro          { nombre, telefono?, correo?, password, quierePuntos? }
+ *   POST /publico/:empresa/cuenta/login             { usuario, password }
+ *   POST /publico/:empresa/cuenta/logout
+ *   POST /publico/:empresa/cuenta/password          { passwordActual, passwordNueva }
+ *   PUT  /publico/:empresa/cuenta/consentimiento    { otorgado }
  *
  * Solo lectura (GET), así que no necesitan `x-requested-with`. Como no hay sesión que limite el abuso, llevan
  * un límite de frecuencia por IP, en memoria (como los de auth: se reinicia con el servidor y no se comparte
@@ -48,7 +55,7 @@ export function paginaCatalogo(html, baseUrl) {
   return html.replace("<head>", `<head>\n    <base href="${escaparAttr(base)}" />`);
 }
 
-export function montarRutasPublicas(router, publico, htmlCatalogo, limitador = limitadorPorIp()) {
+export function montarRutasPublicas(router, publico, htmlCatalogo, limitador = limitadorPorIp(), cuentas = null) {
   const envolver = (fn) => async (req, res, next) => {
     try {
       await fn(req, res);
@@ -81,12 +88,13 @@ export function montarRutasPublicas(router, publico, htmlCatalogo, limitador = l
     }),
   );
 
-  router.get(
-    "/publico/:empresa/cliente",
-    limitador,
-    envolver(async (req, res) => {
-      res.setHeader("Cache-Control", "no-store");
-      res.status(200).json(await publico.cliente({ slug: req.params.empresa }));
-    }),
-  );
+  // Cuenta del cliente: solo si el núcleo la trae. Los manejadores ya traducen sus errores y exigen CSRF al escribir.
+  if (cuentas) {
+    router.get("/publico/:empresa/cliente", limitador, cuentas.yo);
+    router.post("/publico/:empresa/cuenta/registro", limitador, cuentas.registro);
+    router.post("/publico/:empresa/cuenta/login", limitador, cuentas.login);
+    router.post("/publico/:empresa/cuenta/logout", limitador, cuentas.logout);
+    router.post("/publico/:empresa/cuenta/password", limitador, cuentas.password);
+    router.put("/publico/:empresa/cuenta/consentimiento", limitador, cuentas.consentimiento);
+  }
 }

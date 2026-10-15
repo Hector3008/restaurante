@@ -9,6 +9,7 @@ import { cuerpoPrecio,
   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
   accionesItem, accionesPedido, resumenItems, itemsDeCocina, haceCuanto, puedeMarcarListos,
+  etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos,
 } from "../client/src/pedidos.js";
 
 // api.js calcula la ruta base con document.baseURI al importarse: se simula antes de cargarlo.
@@ -16,7 +17,7 @@ globalThis.document ??= { baseURI: "http://localhost/restaurante/" };
 const { ErrorApi, mensajeDeError, normalizarYo, urlCuenta, urlCarta } = await import("../client/src/api.js");
 
 // Roles de la plantilla `restaurante` del núcleo (core/src/modelos/plantillas.js)
-const MESERO = ["estacion:creacion", "estacion:carta", "documento:crear", "documento:leer", "documento:editar", "catalogo:leer", "cliente:leer", "cliente:crear"];
+const MESERO = ["estacion:creacion", "estacion:carta", "documento:crear", "documento:leer", "documento:editar", "catalogo:leer", "cliente:leer", "cliente:crear", "cliente:cuenta", "fidelizacion:canjear"];
 const COCINA = ["estacion:cocina", "documento:leer", "documento:editar"];
 const CAJERO = [...MESERO, "estacion:administracion"];
 const pasos = (estado, permisos) => accionesItem(estado, permisos).pasos.map((p) => p.id);
@@ -266,4 +267,40 @@ test("cuerpoPrecio: el precio es obligatorio y admite hasta 2 decimales (como el
   assert.equal(cuerpoPrecio("1.234").ok, false);
   assert.equal(cuerpoPrecio("abc").ok, false);
   assert.equal(cuerpoPrecio("-1").ok, false);
+});
+
+test("cuerpoPedido envía el id del cliente elegido (y nada de él si no hay) y el servidor lo acepta", () => {
+  const f = { ...formularioVacio("llevar"), referencia: "Ana", items: [agregarLibre([], { nombre: "Torta", precio: 5 })[0]] };
+  assert.equal("clienteId" in cuerpoPedido(f), false);
+  const con = cuerpoPedido({ ...f, cliente: { id: "64b7f0f0f0f0f0f0f0f0f0f0", nombre: "Ana" } });
+  assert.equal(con.clienteId, "64b7f0f0f0f0f0f0f0f0f0f0");
+  assert.equal(validarCreacion(con).clienteId, "64b7f0f0f0f0f0f0f0f0f0f0");
+  assert.equal(formularioVacio().cliente, null);
+});
+
+test("etiquetaCliente y sinProgramaPuntos", () => {
+  assert.equal(etiquetaCliente(null), "");
+  assert.equal(etiquetaCliente({ nombre: "Ana" }), "Ana");
+  assert.equal(etiquetaCliente({ nombre: "Ana", telefono: "+51987654321", correo: "a@b.pe" }), "Ana · +51987654321");
+  assert.equal(etiquetaCliente({ nombre: "Ana", correo: "a@b.pe" }), "Ana · a@b.pe");
+  assert.equal(sinProgramaPuntos({ consentimientos: { programaPuntos: { otorgado: false } } }), true);
+  assert.equal(sinProgramaPuntos({ consentimientos: { programaPuntos: { otorgado: true } } }), false);
+  assert.equal(sinProgramaPuntos({ nombre: "sin ficha completa" }), false, "sin la ficha no se afirma nada");
+  assert.equal(sinProgramaPuntos(null), false);
+});
+
+test("cuerpoClienteNuevo: nombre y (teléfono o correo) obligatorios; solo envía lo escrito", () => {
+  assert.equal(cuerpoClienteNuevo({ nombre: "  ", telefono: "1" }).ok, false);
+  assert.equal(cuerpoClienteNuevo({ nombre: "Ana" }).ok, false);
+  assert.deepEqual(cuerpoClienteNuevo({ nombre: " Ana ", telefono: " 987654321 ", correo: "" }), { ok: true, cuerpo: { nombre: "Ana", telefono: "987654321" } });
+  assert.deepEqual(cuerpoClienteNuevo({ nombre: "Ana", correo: "a@b.pe" }).cuerpo, { nombre: "Ana", correo: "a@b.pe" });
+});
+
+test("textoPuntos: qué le dice el cobro al cajero", () => {
+  assert.equal(textoPuntos(undefined), null);
+  assert.match(textoPuntos({ acumulados: 18, saldo: 118 }), /ganó 18 puntos \(saldo: 118\)/);
+  assert.match(textoPuntos({ acumulados: 1 }), /ganó 1 punto\./);
+  assert.match(textoPuntos({ acumulados: 0, motivo: "sin_consentimiento" }), /no aceptó/);
+  assert.match(textoPuntos({ acumulados: 0, error: true }), /se cobró, pero no se pudieron registrar/);
+  assert.equal(textoPuntos({ acumulados: 0, motivo: "sin_cliente" }), null);
 });

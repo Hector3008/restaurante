@@ -118,3 +118,13 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .rs-mini__item > span:first-child { flex: 1; }
 .rs-mini__item--anulado > span:first-child { text-decoration: line-through; opacity: .6; }
 .rs-linea--anulado { opacity: .6; }
+
+/* Cliente del pedido */
+.rs-cliente { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border: 1px solid var(--color-borde); border-radius: 8px; background: var(--color-superficie); }
+.rs-cliente__titulo { font-weight: 600; }
+.rs-cliente__elegido { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.rs-cliente__nuevo { margin: 0; }
+.rs-check { display: flex; gap: 8px; align-items: flex-start; }
+.rs-temporal { display: grid; gap: 8px; padding: 12px; border: 1px dashed var(--color-borde); border-radius: 8px; }
+.rs-temporal code { font-size: 1.2rem; letter-spacing: 0.05em; user-select: all; }
+.rs-puntos { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: var(--color-fondo); border: 1px solid var(--color-borde); }

@@ -76,3 +76,29 @@ export function estrellasLlenas(nota) {
 
 /** "4,7" con coma decimal. */
 export const formatoNota = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(1).replace(".", ",") : "—");
+
+/** Texto de un movimiento de puntos para la lista (el servicio manda `detalle` solo en algunos). */
+export function textoMovimiento(m) {
+  if (m?.detalle) return m.detalle;
+  return { acumulo: "Puntos ganados", canje: "Canje de puntos", ajuste: "Ajuste", vencimiento: "Puntos vencidos" }[m?.tipo] ?? "Movimiento";
+}
+
+/** Valida el formulario de registro antes de enviarlo (el servidor valida de verdad). Devuelve un texto o null. */
+export function validarRegistro({ nombre, usuario, password, repetir }) {
+  if (!String(nombre ?? "").trim()) return "Escribe tu nombre.";
+  if (!String(usuario ?? "").trim()) return "Escribe tu correo o tu teléfono.";
+  if (String(password ?? "").length < 8) return "La contraseña debe tener al menos 8 caracteres.";
+  if (password !== repetir) return "Las contraseñas no coinciden.";
+  return null;
+}
+
+/** Separa lo que escribió el cliente en correo o teléfono (lo que lleva @ es correo). */
+export function cuerpoRegistro({ nombre, usuario, password, quierePuntos }) {
+  const u = String(usuario).trim();
+  return {
+    nombre: String(nombre).trim(),
+    ...(u.includes("@") ? { correo: u } : { telefono: u }),
+    password,
+    quierePuntos: quierePuntos === true,
+  };
+}

@@ -2,13 +2,15 @@ import { useState } from "react";
 import { api, mensajeDeError } from "./api.js";
 import { CANALES, cuerpoPedido, cuerpoItems, formularioVacio, validarFormulario } from "./pedidos.js";
 import EditorItems from "./EditorItems.jsx";
+import SelectorCliente from "./SelectorCliente.jsx";
 
 // Abrir un pedido (el pedido nace al pedir el primer ítem) o, con `cuenta`, pedir más en un pedido abierto.
-export default function FormularioPedido({ pedido, puedeVerCatalogo, puedeCambiarPrecio, alGuardar, alCancelar }) {
+export default function FormularioPedido({ pedido, puedeVerCatalogo, puedeCambiarPrecio, puedeVerClientes = false, puedeCrearClientes = false, puedeCuentas = false, alGuardar, alCancelar }) {
   const agregando = Boolean(pedido);
   const [f, setF] = useState(() => formularioVacio());
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [claveSinAnotar, setClaveSinAnotar] = useState(false);
   const campo = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
 
   async function enviar(e) {
@@ -83,6 +85,16 @@ export default function FormularioPedido({ pedido, puedeVerCatalogo, puedeCambia
         </>
       )}
 
+      {!agregando && puedeVerClientes && (
+        <SelectorCliente
+          valor={f.cliente}
+          alCambiar={(cliente) => setF((x) => ({ ...x, cliente }))}
+          puedeCrear={puedeCrearClientes}
+          puedeCuenta={puedeCuentas}
+          alPendiente={setClaveSinAnotar}
+        />
+      )}
+
       <EditorItems
         items={f.items}
         alCambiar={(items) => setF((x) => ({ ...x, items }))}
@@ -100,7 +112,7 @@ export default function FormularioPedido({ pedido, puedeVerCatalogo, puedeCambia
 
       {error && <p className="aviso-error" role="alert">{error}</p>}
       <div className="rs-acciones">
-        <button type="submit" className="rs-btn rs-btn--primario" disabled={enviando}>
+        <button type="submit" className="rs-btn rs-btn--primario" disabled={enviando || claveSinAnotar} title={claveSinAnotar ? "Anota primero la contraseña temporal del cliente" : undefined}>
           {enviando ? "Enviando…" : agregando ? "Enviar a cocina" : "Abrir pedido y enviar a cocina"}
         </button>
         <button type="button" className="rs-btn" onClick={alCancelar}>Cancelar</button>

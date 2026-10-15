@@ -140,6 +140,7 @@ export const formularioVacio = (canal = "salon") => ({
   telefono: "",
   referenciaEntrega: "",
   notas: "",
+  cliente: null, // { id, nombre, ... } elegido en el selector; null = sin cliente cargado
   items: [],
 });
 
@@ -170,7 +171,13 @@ function datosDelCanal(f) {
 
 /** Cuerpo de POST /pedidos: el pedido se abre con su primer ítem. */
 export function cuerpoPedido(f) {
-  return { canal: f.canal, ...datosDelCanal(f), notas: nulo(f.notas), items: f.items.map(itemAEnvio) };
+  return {
+    canal: f.canal,
+    ...datosDelCanal(f),
+    notas: nulo(f.notas),
+    ...(f.cliente?.id ? { clienteId: f.cliente.id } : {}),
+    items: f.items.map(itemAEnvio),
+  };
 }
 
 /** Cuerpo de POST /pedidos/:code/items. */
@@ -187,6 +194,7 @@ export function formularioDesdePedido(c) {
     telefono: d.entrega?.telefono ?? "",
     referenciaEntrega: d.entrega?.referencia ?? "",
     notas: d.notas ?? "",
+    cliente: null,
     items: [],
   };
 }
@@ -304,4 +312,43 @@ export function destinoDe(c) {
   if (c.canal === "llevar") return c.referencia ? `Para llevar · ${c.referencia}` : "Para llevar";
   if (c.canal === "delivery") return c.referencia ? `Delivery · ${c.referencia}` : "Delivery";
   return "";
+}
+
+// ---------- cliente del pedido y puntos ----------
+
+/** Lo que se muestra de un cliente en listas y en el pedido: "Ana Ruiz · +51 987 654 321". */
+export function etiquetaCliente(c) {
+  if (!c) return "";
+  const dato = c.telefono || c.correo || "";
+  return dato ? `${c.nombre} · ${dato}` : c.nombre;
+}
+
+/** Aviso del selector cuando el cliente aún no acepta el programa de puntos (no acumula hasta que lo acepte). Solo si se conoce su ficha. */
+export const sinProgramaPuntos = (c) => Boolean(c?.consentimientos) && c.consentimientos.programaPuntos?.otorgado !== true;
+
+/** Cuerpo de POST /clientes: solo lo que se escribió (el servidor valida y normaliza el teléfono). */
+export function cuerpoClienteNuevo({ nombre, telefono, correo }) {
+  const n = String(nombre ?? "").trim();
+  if (!n) return { ok: false, error: "Escribe el nombre del cliente." };
+  const t = String(telefono ?? "").trim();
+  const c = String(correo ?? "").trim();
+  if (!t && !c) return { ok: false, error: "Indica un teléfono o un correo: con eso el cliente entra a su cuenta." };
+  return { ok: true, cuerpo: { nombre: n, ...(t ? { telefono: t } : {}), ...(c ? { correo: c } : {}) } };
+}
+
+/** Frase para el cajero tras cobrar: cuántos puntos ganó el cliente, o por qué no. Null si el pedido no tenía cliente. */
+export function textoPuntos(puntos) {
+  if (!puntos) return null;
+  if (puntos.error) return "El pedido se cobró, pero no se pudieron registrar los puntos. Avisa a un administrador.";
+  if (puntos.acumulados > 0)
+    return `El cliente ganó ${puntos.acumulados} punto${puntos.acumulados === 1 ? "" : "s"}${puntos.saldo != null ? ` (saldo: ${puntos.saldo})` : ""}.`;
+  const motivos = {
+    sin_consentimiento: "El cliente no aceptó el programa de puntos: no acumula.",
+    deshabilitada: "El programa de puntos está desactivado.",
+    sin_monto: "El pedido no tiene un total para dar puntos.",
+    sin_puntos: "Este monto no alcanza para ganar puntos.",
+    cliente_inactivo: "El cliente está desactivado: no acumula.",
+    cliente_no_encontrado: "No se encontró al cliente: no acumula.",
+  };
+  return motivos[puntos.motivo] ?? null;
 }

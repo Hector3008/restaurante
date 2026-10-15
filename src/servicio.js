@@ -94,6 +94,9 @@ export function crearServicio(core) {
       mesa: x.mesa ?? null,
       referencia: x.referencia ?? null,
       moneda: x.moneda ?? null,
+      cliente: d.snapshot?.cliente?.clienteId
+        ? { id: String(d.snapshot.cliente.clienteId), nombre: d.snapshot.cliente.nombre ?? "" }
+        : null,
       total: d.estado === "pagado" ? x.total ?? null : items ? totalDe(items) : x.total ?? null,
       items: items ?? null,
       creadoTs: d.createdAt ?? null,
@@ -253,9 +256,36 @@ export function crearServicio(core) {
     });
   }
 
-  // Cobrar: todo el pedido de una vez, cuando todos los ítems ya se entregaron (o se anuló).
-  async function cobrar({ empresaId, actor, code, esperaVersion }) {
+  // Asocia (o quita, con clienteId null) el cliente de un pedido ABIERTO. Guarda la instantánea (nombre, teléfono)
+  // en el pedido: es lo que verá el cobro y lo que usa la fidelización al pagar.
+  async function asociarCliente({ empresaId, actor, code, clienteId, esperaVersion }) {
     exigir(actor, "documento:editar");
+    if (clienteId !== null && typeof clienteId !== "string")
+      throw new ErrorPedido("DATOS_INVALIDOS", "clienteId debe ser un id o null");
+    return await conEmpresa(empresaId, async () => {
+      const actual = await cargarPedido(code);
+      if (actual.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido ya no está abierto");
+      const cliente = clienteId
+        ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
+        : null;
+      const nuevo = await documentos.nuevaVersion({
+        code,
+        snapshot: { ...(actual.snapshot ?? {}), cliente },
+        usuarioId: actor.usuarioId,
+        esperaVersion: esperaVersion ?? actual.version,
+      });
+      return await completoPedido(nuevo);
+    });
+  }
+
+  // Cobrar: todo el pedido de una vez, cuando todos los ítems ya se entregaron (o se anuló).
+  // `clienteId` (opcional) asocia al cliente en la misma transición (cobro de alguien que no se había cargado).
+  // Tras pagar, los puntos se acumulan por el evento del motor; aquí se vuelve a pedir (idempotente) para
+  // informar cuántos se dieron. Si la fidelización falla, el pago NO se revierte: queda en `puntos.error`.
+  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId }) {
+    exigir(actor, "documento:editar");
+    if (clienteId !== undefined && clienteId !== null && typeof clienteId !== "string")
+      throw new ErrorPedido("DATOS_INVALIDOS", "clienteId debe ser un id o null");
     return await conEmpresa(empresaId, async () => {
       const pedido = await cargarPedido(code);
       const completa = await completoPedido(pedido);
@@ -266,16 +296,41 @@ export function crearServicio(core) {
         });
       if (!completa.items.some((i) => i.estado === "entregado"))
         throw new ErrorPedido("ESTADO_INVALIDO", "el pedido no tiene nada entregado que cobrar");
+      let snapshot;
+      if (clienteId !== undefined) {
+        const cliente = clienteId
+          ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
+          : null;
+        snapshot = { ...(pedido.snapshot ?? {}), cliente };
+      }
       const d = await documentos.transicionar({
         code,
         a: "pagado",
         usuarioId: actor.usuarioId,
         permisos: actor.permisos,
         doc: { ...pedido.payload.doc, total: totalDe(completa.items) },
+        ...(snapshot ? { snapshot } : {}),
         esperaVersion,
       });
-      return await completoPedido(d);
+      const respuesta = await completoPedido(d);
+      const puntos = await puntosDelPago({ empresaId, code, d });
+      return puntos ? { ...respuesta, puntos } : respuesta;
     });
+  }
+
+  // Resultado de los puntos de un pedido recién pagado. null si no hay fidelización o el pedido no tiene cliente.
+  async function puntosDelPago({ empresaId, code, d }) {
+    if (!core.fidelizacion || !d.snapshot?.cliente?.clienteId) return null;
+    try {
+      const r = await core.fidelizacion.acumularPorDocumento({ empresaId, code });
+      return {
+        acumulados: r.acumulados ?? 0,
+        saldo: r.saldo ?? null,
+        ...(r.motivo ? { motivo: r.motivo } : {}),
+      };
+    } catch {
+      return { acumulados: 0, error: true };
+    }
   }
 
   // Anular el pedido anula también lo que siga en pie (con el mismo motivo). Si algún ítem no pudo
@@ -393,6 +448,7 @@ export function crearServicio(core) {
       obtener: obtenerPedido,
       listar: listarPedidos,
       editar: editarPedido,
+      asociarCliente,
       cobrar,
       anular: anularPedido,
     },

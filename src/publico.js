@@ -1,6 +1,5 @@
 import { ErrorPedido } from "./errores.js";
 import { ErrorCatalogo } from "core";
-import { clienteActual } from "./cliente-demo.js";
 import { resenasDe } from "./resenas-demo.js";
 
 // Vista pública de la carta (sin sesión). La empresa se identifica por su `slug` (arquitectura 5.13: los pedidos
@@ -107,11 +106,11 @@ export function crearPublico(core) {
     };
   }
 
-  /** El cliente y sus puntos. Hoy es un cliente fijo (cliente-demo.js); la empresa solo se valida. */
-  async function cliente({ slug }) {
-    const e = await empresaPorSlug(slug);
-    return clienteActual({ empresa: e.slug });
+  /** La empresa de una petición pública, en la forma que piden los manejadores de cuentas del núcleo. */
+  async function empresaDe(req) {
+    const e = await empresaPorSlug(req.params?.empresa);
+    return { id: e._id, slug: e.slug };
   }
 
-  return { carta, plato, cliente, empresaPorSlug };
+  return { carta, plato, empresaPorSlug, empresaDe };
 }

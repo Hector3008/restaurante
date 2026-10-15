@@ -28,7 +28,8 @@ function responder(res, e, next) {
  *   POST /pedidos        { canal, mesa|referencia|entrega, items: [...] }   documento:crear
  *   POST /pedidos/:code/items   { items: [...] }          documento:crear   (más ítems en el mismo pedido)
  *   PUT  /pedidos/:code  { esperaVersion?, mesa, referencia, entrega, notas }   documento:editar
- *   POST /pedidos/:code/cobrar                            documento:editar + estación administración (el motor)
+ *   PUT  /pedidos/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (solo abierto)
+ *   POST /pedidos/:code/cobrar  { esperaVersion?, clienteId? }   documento:editar + estación administración (el motor)
  *   POST /pedidos/:code/anular  { motivo: { codigo, detalle? } }   igual
  *
  * Ítems (un ítem que se mueve por las estaciones; cocina trabaja con estos)
@@ -105,13 +106,25 @@ export function montarRutas(router, core, servicio) {
       res.status(200).json(await pedidos.editar({ ...base(req), code: req.params.code, esperaVersion, ...cuerpo }));
     }),
   );
+  router.put(
+    "/pedidos/:code/cliente",
+    ...editar("creacion"),
+    envolver(true, async (req, res) => {
+      const { esperaVersion, clienteId } = req.body ?? {};
+      res.status(200).json(
+        await pedidos.asociarCliente({ ...base(req), code: req.params.code, esperaVersion, clienteId: clienteId ?? null }),
+      );
+    }),
+  );
   const pasoPedido = (ruta, metodo) =>
     router.post(
       `/pedidos/:code/${ruta}`,
       ...editar("administracion"),
       envolver(true, async (req, res) => {
-        const { esperaVersion, motivo } = req.body ?? {};
-        res.status(200).json(await pedidos[metodo]({ ...base(req), code: req.params.code, esperaVersion, motivo }));
+        const { esperaVersion, motivo, clienteId } = req.body ?? {};
+        res.status(200).json(
+          await pedidos[metodo]({ ...base(req), code: req.params.code, esperaVersion, motivo, ...(clienteId !== undefined ? { clienteId } : {}) }),
+        );
       }),
     );
   pasoPedido("cobrar", "cobrar");

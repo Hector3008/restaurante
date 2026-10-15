@@ -7,8 +7,7 @@ import { ErrorCatalogo } from "core";
 import { agruparPorCategoria, crearPublico, urlImagenSegura } from "../src/publico.js";
 import { resenasDe } from "../src/resenas-demo.js";
 import { limitadorPorIp, paginaCatalogo } from "../src/publico-http.js";
-import { CLIENTE_DEMO, clienteActual } from "../src/cliente-demo.js";
-import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota } from "../client/src/catalogo/logica.js";
+import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento } from "../client/src/catalogo/logica.js";
 
 const middleware = () => (req, res, next) => next();
 
@@ -51,6 +50,22 @@ function nucleoFalso() {
     requierePermiso: middleware,
     eventos: { middleware },
     auth: { exigirCsrf() {} },
+    // Núcleo de cuentas falso: cada manejador responde quién es la empresa que le pasó el servicio.
+    cuentasCliente: {
+      manejadores({ empresaDe }) {
+        const m = (nombre) => async (req, res, next) => {
+          try {
+            const e = await empresaDe(req);
+            res.setHeader("Cache-Control", "no-store");
+            res.status(200).json({ manejador: nombre, empresa: e.slug });
+          } catch (err) {
+            if (err.status) return res.status(err.status).json({ error: err.message, codigo: err.codigo });
+            next(err);
+          }
+        };
+        return { yo: m("yo"), registro: m("registro"), login: m("login"), logout: m("logout"), password: m("password"), consentimiento: m("consentimiento") };
+      },
+    },
   };
 }
 
@@ -122,19 +137,18 @@ describe("servicio público: detalle del plato", () => {
   });
 });
 
-describe("cliente fijo", () => {
-  it("es siempre el mismo, marcado como demostración, y devuelve copias", async () => {
+describe("empresa de las cuentas públicas", () => {
+  it("empresaDe entrega { id, slug } de la empresa del slug de la ruta", async () => {
     const publico = crearPublico(nucleoFalso());
-    const a = await publico.cliente({ slug: "cafe-central" });
-    assert.equal(a.demo, true);
-    assert.equal(a.nombre, CLIENTE_DEMO.nombre);
-    assert.equal(a.puntos, 120);
-    assert.equal(a.puntos, a.movimientos.reduce((n, m) => n + m.puntos, 0) + 0, "los movimientos suman los puntos");
-    a.movimientos[0].puntos = 999;
-    assert.equal(clienteActual().movimientos[0].puntos, 45);
+    assert.deepEqual(await publico.empresaDe({ params: { empresa: "cafe-central" } }), { id: "e1", slug: "cafe-central" });
   });
-  it("también exige una empresa válida", async () => {
-    await assert.rejects(crearPublico(nucleoFalso()).cliente({ slug: "no-existe" }), (e) => e.status === 404);
+  it("rechaza con 404 una empresa inexistente, sin servicio, apagada o dada de baja", async () => {
+    const publico = crearPublico(nucleoFalso());
+    for (const slug of ["no-existe", "sin-servicio", "servicio-off", "empresa-baja", undefined])
+      await assert.rejects(publico.empresaDe({ params: { empresa: slug } }), (e) => e.status === 404, String(slug));
+  });
+  it("ya no existe el cliente de ejemplo", () => {
+    assert.equal(crearPublico(nucleoFalso()).cliente, undefined);
   });
 });
 
@@ -179,11 +193,45 @@ describe("rutas públicas por HTTP", () => {
     assert.equal((await no.json()).error, "plato no encontrado");
   });
 
-  it("el cliente responde sin sesión y nunca se cachea", async () => {
-    const r = await fetch(`${url}/publico/cafe-central/cliente`);
-    assert.equal(r.status, 200);
-    assert.equal(r.headers.get("cache-control"), "no-store");
-    assert.equal((await r.json()).demo, true);
+  it("las rutas de cuenta llegan a los manejadores del núcleo con la empresa del slug y nunca se cachean", async () => {
+    const casos = [
+      ["GET", "cliente", "yo"],
+      ["POST", "cuenta/registro", "registro"],
+      ["POST", "cuenta/login", "login"],
+      ["POST", "cuenta/logout", "logout"],
+      ["POST", "cuenta/password", "password"],
+      ["PUT", "cuenta/consentimiento", "consentimiento"],
+    ];
+    for (const [metodo, ruta, manejador] of casos) {
+      const r = await fetch(`${url}/publico/cafe-central/${ruta}`, {
+        method: metodo,
+        headers: { "content-type": "application/json", "x-requested-with": "fetch" },
+        body: metodo === "GET" ? undefined : "{}",
+      });
+      assert.equal(r.status, 200, ruta);
+      assert.equal(r.headers.get("cache-control"), "no-store", ruta);
+      assert.deepEqual(await r.json(), { manejador, empresa: "cafe-central" }, ruta);
+    }
+  });
+
+  it("las rutas de cuenta de una empresa desconocida dan 404, no 500", async () => {
+    const r = await fetch(`${url}/publico/no-existe/cuenta/login`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.equal(r.status, 404);
+    assert.equal((await r.json()).codigo, "NO_ENCONTRADO");
+  });
+
+  it("sin cuentas en el núcleo no se montan rutas de cuenta", async () => {
+    const sin = nucleoFalso();
+    delete sin.cuentasCliente;
+    const app = express();
+    app.use("/x", createRouter({ core: sin }));
+    const srv = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
+    try {
+      const r = await fetch(`http://127.0.0.1:${srv.address().port}/x/publico/cafe-central/cliente`);
+      assert.equal(r.status, 404);
+    } finally {
+      srv.close();
+    }
   });
 
   it("empresa desconocida: 404 con mensaje, no un error 500", async () => {
@@ -265,5 +313,25 @@ describe("lógica del front de la carta", () => {
     assert.equal(formatoPuntos(45), "+45");
     assert.equal(formatoPuntos(-20), "−20");
     assert.equal(formatoPuntos(0), "0");
+  });
+});
+
+describe("lógica de la cuenta en la carta", () => {
+  it("validarRegistro: pide nombre, usuario, 8+ caracteres y que coincidan", () => {
+    const ok = { nombre: "Ana", usuario: "ana@correo.pe", password: "12345678", repetir: "12345678" };
+    assert.equal(validarRegistro(ok), null);
+    assert.match(validarRegistro({ ...ok, nombre: " " }), /nombre/);
+    assert.match(validarRegistro({ ...ok, usuario: "" }), /correo o tu teléfono/);
+    assert.match(validarRegistro({ ...ok, password: "123", repetir: "123" }), /8 caracteres/);
+    assert.match(validarRegistro({ ...ok, repetir: "otra-cosa" }), /no coinciden/);
+  });
+  it("cuerpoRegistro: lo que lleva @ es correo, lo demás teléfono; el consentimiento solo si se marcó", () => {
+    assert.deepEqual(cuerpoRegistro({ nombre: " Ana ", usuario: " a@b.pe ", password: "x", quierePuntos: true }), { nombre: "Ana", correo: "a@b.pe", password: "x", quierePuntos: true });
+    assert.deepEqual(cuerpoRegistro({ nombre: "Ana", usuario: "987654321", password: "x" }), { nombre: "Ana", telefono: "987654321", password: "x", quierePuntos: false });
+  });
+  it("textoMovimiento usa el detalle o un texto por tipo", () => {
+    assert.equal(textoMovimiento({ detalle: "Pedido pagado", tipo: "acumulo" }), "Pedido pagado");
+    assert.equal(textoMovimiento({ tipo: "canje" }), "Canje de puntos");
+    assert.equal(textoMovimiento({}), "Movimiento");
   });
 });

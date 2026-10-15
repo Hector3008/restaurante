@@ -54,7 +54,7 @@ function nucleoFalso() {
         const d = docs.get(p.code);
         if (p.esperaVersion !== undefined && p.esperaVersion !== d.version) throw err("CONFLICTO_VERSION", "otro cambió el documento");
         if (!tipos[d.tipo].editables.includes(d.estado)) throw err("ESTADO_NO_EDITABLE", "no editable");
-        d.payload = { doc: p.doc }; if (p.snapshot) d.snapshot = p.snapshot; d.version++;
+        if (p.doc) d.payload = { doc: p.doc }; if (p.snapshot) d.snapshot = p.snapshot; d.version++;
         return structuredClone(d);
       },
       async transicionar(p) {
@@ -67,6 +67,7 @@ function nucleoFalso() {
         if (req && !p.sistema && !permite(p.permisos ?? [], req)) throw err("PERMISO_INSUFICIENTE", `falta ${req}`);
         if (t.motivos?.[p.a] && !t.motivos[p.a].includes(p.motivo?.codigo)) throw err("MOTIVO_REQUERIDO", "motivo");
         if (p.doc) d.payload = { doc: p.doc };
+        if (p.snapshot) d.snapshot = p.snapshot;
         d.historial.push({ de: d.estado, a: p.a, motivo: p.motivo });
         d.estado = p.a;
         return structuredClone(d);
@@ -328,6 +329,111 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
     });
   });
 
+  describe("cliente del pedido y puntos al pagar", () => {
+    const entregarTodo = async (c) => {
+      for (const i of c.items) {
+        await svc.items.marcarLista(m(COCINA, i.code));
+        await svc.items.entregar(m(MESERO, i.code));
+      }
+    };
+    const ID = "64b7f0f0f0f0f0f0f0f0f0f0";
+    const conPuntos = (resultado) => {
+      const llamadas = [];
+      core.fidelizacion = {
+        acumularPorDocumento: async (a) => {
+          llamadas.push(a);
+          if (resultado instanceof Error) throw resultado;
+          return resultado;
+        },
+      };
+      svc = crearServicio(core);
+      return llamadas;
+    };
+
+    it("asocia al cliente a un pedido abierto, guarda su nombre y teléfono y lo muestra en el resumen", async () => {
+      nuevo();
+      const c = await abrir();
+      assert.equal(c.cliente, null);
+      const p = await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
+      assert.deepEqual(p.cliente, { id: ID, nombre: "Ana" });
+      assert.equal(p.snapshot.cliente.telefono, "+51987654321");
+      assert.equal(p.version, c.version + 1);
+      assert.equal(p.items.length, 2, "los ítems no se tocan");
+    });
+
+    it("cambia y quita al cliente (null) mientras el pedido está abierto", async () => {
+      nuevo();
+      const c = await abrir();
+      await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
+      const q = await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: null }));
+      assert.equal(q.cliente, null);
+    });
+
+    it("no asocia a un pedido cerrado, sin permiso, con versión vieja ni con un id que no es texto", async () => {
+      nuevo();
+      const c = await abrir();
+      await assert.rejects(svc.pedidos.asociarCliente(m(SOLO_LEER, c.code, { clienteId: ID })), cod("PERMISO_INSUFICIENTE"));
+      await assert.rejects(svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: 5 })), cod("DATOS_INVALIDOS"));
+      await assert.rejects(svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID, esperaVersion: 99 })), cod("CONFLICTO_VERSION"));
+      await entregarTodo(c);
+      await svc.pedidos.cobrar(m(CAJERO, c.code));
+      await assert.rejects(svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID })), cod("ESTADO_INVALIDO"));
+    });
+
+    it("cobrar con clienteId asocia al cliente en la misma operación", async () => {
+      nuevo();
+      const c = await abrir();
+      await entregarTodo(c);
+      const p = await svc.pedidos.cobrar(m(CAJERO, c.code, { clienteId: ID }));
+      assert.equal(p.estado, "pagado");
+      assert.equal(p.cliente.id, ID);
+    });
+
+    it("al cobrar un pedido con cliente informa los puntos acumulados", async () => {
+      nuevo();
+      const llamadas = conPuntos({ acumulados: 18, clienteId: ID, saldo: 118 });
+      const c = await abrir();
+      await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
+      await entregarTodo(c);
+      const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
+      assert.deepEqual(p.puntos, { acumulados: 18, saldo: 118 });
+      assert.deepEqual(llamadas, [{ empresaId: E, code: c.code }]);
+    });
+
+    it("sin consentimiento informa el motivo; sin cliente ni siquiera consulta", async () => {
+      nuevo();
+      const llamadas = conPuntos({ acumulados: 0, motivo: "sin_consentimiento" });
+      const a = await abrir();
+      await svc.pedidos.asociarCliente(m(MESERO, a.code, { clienteId: ID }));
+      await entregarTodo(a);
+      assert.deepEqual((await svc.pedidos.cobrar(m(CAJERO, a.code))).puntos, { acumulados: 0, saldo: null, motivo: "sin_consentimiento" });
+      const b = await abrir();
+      await entregarTodo(b);
+      const p = await svc.pedidos.cobrar(m(CAJERO, b.code));
+      assert.equal(p.puntos, undefined);
+      assert.equal(llamadas.length, 1);
+    });
+
+    it("si la fidelización falla, el pago se mantiene y se avisa en puntos.error", async () => {
+      nuevo();
+      conPuntos(new Error("base caída"));
+      const c = await abrir();
+      await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
+      await entregarTodo(c);
+      const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
+      assert.equal(p.estado, "pagado");
+      assert.deepEqual(p.puntos, { acumulados: 0, error: true });
+    });
+
+    it("sin fidelización en el núcleo, cobrar sigue igual y no trae puntos", async () => {
+      nuevo();
+      const c = await abrir();
+      await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
+      await entregarTodo(c);
+      assert.equal((await svc.pedidos.cobrar(m(CAJERO, c.code))).puntos, undefined);
+    });
+  });
+
   describe("cobrar y anular el pedido", () => {
     const entregarTodo = async (c) => {
       for (const i of c.items) {
@@ -521,6 +627,20 @@ describe("rutas del restaurante (núcleo falso)", () => {
     r = await pedir("PUT", `/pedidos/${c.code}`, { esperaVersion: 99, notas: "x" });
     assert.equal(r.status, 409);
     assert.equal((await r.json()).codigo, "CONFLICTO_VERSION");
+  });
+
+  it("PUT /pedidos/:code/cliente asocia y quita al cliente; exige x-requested-with", async () => {
+    const c = await (await pedir("POST", "/pedidos", pedido())).json();
+    let r = await pedir("PUT", `/pedidos/${c.code}/cliente`, { clienteId: "64b7f0f0f0f0f0f0f0f0f0f0" });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).cliente.nombre, "Ana");
+    r = await pedir("PUT", `/pedidos/${c.code}/cliente`, { clienteId: null });
+    assert.equal((await r.json()).cliente, null);
+    r = await pedir("PUT", `/pedidos/${c.code}/cliente`, {});
+    assert.equal((await r.json()).cliente, null, "sin clienteId equivale a quitarlo");
+    assert.equal((await pedir("PUT", `/pedidos/${c.code}/cliente`, { clienteId: 7 })).status, 400);
+    assert.equal((await pedir("PUT", `/pedidos/${c.code}/cliente`, {}, { "x-requested-with": "" })).status, 403);
+    await pedir("POST", `/pedidos/${c.code}/anular`, { motivo: { codigo: "otro" } });
   });
 
   it("anular el pedido por HTTP anula sus ítems", async () => {

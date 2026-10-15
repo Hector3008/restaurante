@@ -1,4 +1,4 @@
-// Reseñas de EJEMPLO para la tarjeta de detalle del plato. Provisional, igual que cliente-demo.js: todavía no
+// Reseñas de EJEMPLO para la tarjeta de detalle del plato. Provisional: todavía no
 // hay identidad del cliente final ni dónde guardar reseñas. Solo texto y estrellas: sin imágenes ni videos
 // (decisión de producto). Las mismas para todos los platos; la respuesta lleva `demo: true` y la página lo avisa.
 // Cuando existan reseñas reales, solo se reemplaza `resenasDe()`.

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import Plato from "./Plato.jsx";
-import { filtrarCarta, formatoFecha, formatoPrecio, formatoPuntos, hashPlato, rutaDesdeHash, slugDesdeUbicacion, totalItems } from "./logica.js";
+import Cuenta from "./Cuenta.jsx";
+import { filtrarCarta, formatoPrecio, hashPlato, rutaDesdeHash, slugDesdeUbicacion, totalItems } from "./logica.js";
 
-// Vista pública de la carta: lo que ve un cliente, sin iniciar sesión. Carta y puntos se piden por separado:
-// si los puntos fallan, la carta se sigue viendo.
+// Vista pública de la carta: la carta se ve sin iniciar sesión. Carta y cuenta se piden por separado: si la cuenta
+// falla, la carta se sigue viendo. Los puntos que se muestran son los reales del cliente que entró.
 export default function Catalogo() {
   const slug = useMemo(() => slugDesdeUbicacion(window.location.pathname, window.location.search), []);
   const [carta, setCarta] = useState(null);
@@ -12,7 +13,6 @@ export default function Catalogo() {
   const [errorCarta, setErrorCarta] = useState(null);
   const [texto, setTexto] = useState("");
   const [categoria, setCategoria] = useState(null);
-  const [verMovimientos, setVerMovimientos] = useState(false);
   const [ruta, setRuta] = useState(() => rutaDesdeHash(window.location.hash));
   const scrollCarta = useRef(0);
 
@@ -78,36 +78,7 @@ export default function Catalogo() {
         <p className="rs-empresa">Nuestra carta</p>
       </header>
 
-      {cliente && (
-        <section className="cat-puntos" aria-label="Tus puntos">
-          <div className="cat-puntos__fila">
-            <div>
-              <small>Hola, {cliente.nombre}</small>
-              <p className="cat-puntos__total">
-                <strong>{cliente.puntos}</strong> puntos acumulados
-              </p>
-            </div>
-            {cliente.movimientos?.length > 0 && (
-              <button type="button" className="rs-btn" onClick={() => setVerMovimientos((v) => !v)} aria-expanded={verMovimientos}>
-                {verMovimientos ? "Ocultar movimientos" : "Ver movimientos"}
-              </button>
-            )}
-          </div>
-          {verMovimientos && (
-            <ul className="cat-movimientos">
-              {cliente.movimientos.map((m, i) => (
-                <li key={i} className="rs-tarjeta__fila">
-                  <span>
-                    {m.detalle} <small>{formatoFecha(m.ts)}</small>
-                  </span>
-                  <span className={`rs-num cat-mov--${m.puntos < 0 ? "canje" : "acumulo"}`}>{formatoPuntos(m.puntos)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {cliente.demo && <small className="cat-demo">Datos de demostración: aún no son tus puntos reales.</small>}
-        </section>
-      )}
+      <Cuenta slug={slug} estado={cliente} alCambiar={setCliente} />
 
       {totalItems(categorias) === 0 ? (
         <p className="rs-vacio">Esta carta todavía no tiene platos.</p>

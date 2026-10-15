@@ -95,6 +95,9 @@ export default function App() {
         <FormularioPedido
           puedeVerCatalogo={permite(permisos, "catalogo:leer")}
           puedeCambiarPrecio={puedeCambiarPrecio(permisos)}
+          puedeVerClientes={permite(permisos, "cliente:leer")}
+          puedeCrearClientes={permite(permisos, "cliente:crear")}
+          puedeCuentas={permite(permisos, "cliente:cuenta")}
           alGuardar={(c) => setVista({ tipo: "detalle", code: c.code })}
           alCancelar={aLista}
         />

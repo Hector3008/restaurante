@@ -1,4 +1,5 @@
-// Cliente HTTP de la vista pública de la carta. Sin sesión: no envía cookies ni x-requested-with.
+// Cliente HTTP de la vista pública de la carta. La carta y los platos no necesitan sesión. La cuenta del cliente
+// (`cuenta/...` y `cliente`) usa su cookie propia `cs_<slug>` (mismo origen) y, al escribir, `x-requested-with`.
 // La página se sirve con <base href> en la raíz del montaje (`<base>/restaurante/`), así que "../" lleva a `<base>/`
 // sin conocer el BASE_PATH (igual que el front de personal).
 const BASE = new URL("../", document.baseURI).pathname;
@@ -10,18 +11,28 @@ export class ErrorCarta extends Error {
   }
 }
 
-async function pedir(ruta) {
+async function pedir(ruta, { metodo = "GET", cuerpo, cuenta = false } = {}) {
   let r;
+  const headers = { Accept: "application/json" };
+  if (metodo !== "GET") headers["x-requested-with"] = "catalogo";
+  if (cuerpo !== undefined) headers["Content-Type"] = "application/json";
   try {
-    r = await fetch(BASE + ruta, { headers: { Accept: "application/json" }, credentials: "omit" });
+    r = await fetch(BASE + ruta, {
+      method: metodo,
+      headers,
+      credentials: cuenta ? "same-origin" : "omit",
+      body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
+    });
   } catch {
     throw new ErrorCarta(0, "No se pudo conectar. Revisa tu conexión e intenta de nuevo.");
   }
   const datos = await r.json().catch(() => null);
   if (!r.ok) {
-    if (r.status === 404) throw new ErrorCarta(404, datos?.error === "plato no encontrado" ? "No encontramos este plato." : "No encontramos esta carta. Revisa el enlace.");
+    if (r.status === 404 && !cuenta) throw new ErrorCarta(404, datos?.error === "plato no encontrado" ? "No encontramos este plato." : "No encontramos esta carta. Revisa el enlace.");
     if (r.status === 429) throw new ErrorCarta(429, "Demasiadas consultas. Espera un momento y recarga.");
-    throw new ErrorCarta(r.status, datos?.error || "No se pudo cargar. Intenta de nuevo en un momento.");
+    const e = new ErrorCarta(r.status, datos?.error || "No se pudo cargar. Intenta de nuevo en un momento.");
+    e.codigo = datos?.codigo ?? null;
+    throw e;
   }
   return datos;
 }
@@ -31,5 +42,11 @@ const enc = encodeURIComponent;
 export const api = {
   carta: (slug) => pedir(`restaurante/publico/${enc(slug)}/carta`),
   plato: (slug, codigo) => pedir(`restaurante/publico/${enc(slug)}/plato/${enc(codigo)}`),
-  cliente: (slug) => pedir(`restaurante/publico/${enc(slug)}/cliente`),
+  // Cuenta del cliente. `cliente` responde { sesion: false } sin sesión.
+  cliente: (slug) => pedir(`restaurante/publico/${enc(slug)}/cliente`, { cuenta: true }),
+  registro: (slug, cuerpo) => pedir(`restaurante/publico/${enc(slug)}/cuenta/registro`, { metodo: "POST", cuerpo, cuenta: true }),
+  login: (slug, cuerpo) => pedir(`restaurante/publico/${enc(slug)}/cuenta/login`, { metodo: "POST", cuerpo, cuenta: true }),
+  logout: (slug) => pedir(`restaurante/publico/${enc(slug)}/cuenta/logout`, { metodo: "POST", cuerpo: {}, cuenta: true }),
+  cambiarPassword: (slug, cuerpo) => pedir(`restaurante/publico/${enc(slug)}/cuenta/password`, { metodo: "POST", cuerpo, cuenta: true }),
+  consentimiento: (slug, otorgado) => pedir(`restaurante/publico/${enc(slug)}/cuenta/consentimiento`, { metodo: "PUT", cuerpo: { otorgado }, cuenta: true }),
 };

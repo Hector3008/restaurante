@@ -85,6 +85,8 @@ export const api = {
     crear: (cuerpo) => pedir("POST", "restaurante/pedidos", cuerpo),
     agregar: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/items`, cuerpo),
     editar: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}`, cuerpo),
+    // clienteId: id del cliente o null para quitarlo (solo con el pedido abierto)
+    asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}/cliente`, cuerpo),
     cobrar: (code, cuerpo = {}) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar`, cuerpo),
     anular: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/anular`, cuerpo),
   },
@@ -95,6 +97,12 @@ export const api = {
     // ruta: lista | entregar | anular
     paso: (code, ruta, cuerpo = {}) => pedir("POST", `restaurante/items/${enc(code)}/${ruta}`, cuerpo),
   },
+
+  // Clientes (cliente:leer / cliente:crear / cliente:cuenta): buscar por nombre, teléfono, correo o @usuario.
+  buscarClientes: async (q) => lista(await pedir("GET", `clientes/?q=${enc(q)}&limite=10`), "clientes"),
+  crearCliente: (cuerpo) => pedir("POST", "clientes", cuerpo),
+  // Cuenta del cliente: devuelve la contraseña temporal UNA vez (no se guarda ni se vuelve a mostrar).
+  crearCuenta: (clienteId) => pedir("POST", `clientes/${enc(clienteId)}/cuenta`, { generarPassword: true }),
 
   // Búsqueda en el catálogo (catalogo:leer): por comienzo del código o parte del nombre.
   buscarCatalogo: async (q) => {

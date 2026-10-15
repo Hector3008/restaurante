@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
+import SelectorCliente from "./SelectorCliente.jsx";
 import {
   CANALES,
   ESTADOS_PEDIDO,
@@ -10,6 +11,8 @@ import {
   cuerpoPrecio,
   destinoDe,
   formatoDinero,
+  permite,
+  textoPuntos,
 } from "./pedidos.js";
 
 function Fila({ etiqueta, children }) {
@@ -32,6 +35,8 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   const [editandoPrecio, setEditandoPrecio] = useState(null); // { code, texto }
   const [motivo, setMotivo] = useState("");
   const [detalleMotivo, setDetalleMotivo] = useState("");
+  const [avisoPuntos, setAvisoPuntos] = useState(""); // lo que ganó el cliente al cobrar (sobrevive a la recarga)
+  const [claveSinAnotar, setClaveSinAnotar] = useState(false);
 
   // `conservarError`: tras un conflicto se recarga pero el aviso tiene que seguir a la vista.
   const cargar = useCallback(async (conservarError = false) => {
@@ -101,9 +106,22 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
             {doc.entrega.referencia && <Fila etiqueta="Referencia">{doc.entrega.referencia}</Fila>}
           </>
         )}
-        {c.snapshot?.cliente?.nombre && <Fila etiqueta="Cliente">{c.snapshot.cliente.nombre}</Fila>}
+        {c.estado !== "abierto" && c.snapshot?.cliente?.nombre && <Fila etiqueta="Cliente">{c.snapshot.cliente.nombre}</Fila>}
         {doc.notas && <Fila etiqueta="Notas">{doc.notas}</Fila>}
       </dl>
+
+      {avisoPuntos && <p className="rs-puntos" role="status">{avisoPuntos}</p>}
+
+      {c.estado === "abierto" && permite(permisos, "documento:editar") && permite(permisos, "cliente:leer") && (
+        <SelectorCliente
+          valor={c.cliente ? { id: c.cliente.id, nombre: c.cliente.nombre, telefono: c.snapshot?.cliente?.telefono ?? null } : null}
+          alCambiar={(cl) => ejecutar(() => api.pedidos.asociarCliente(c.code, { clienteId: cl?.id ?? null, esperaVersion: c.version }))}
+          puedeCrear={permite(permisos, "cliente:crear")}
+          puedeCuenta={permite(permisos, "cliente:cuenta")}
+          deshabilitado={trabajando}
+          alPendiente={setClaveSinAnotar}
+        />
+      )}
 
       <h2 className="rs-subtitulo">Ítems</h2>
       <ul className="rs-lineas">
@@ -186,9 +204,14 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           <button
             type="button"
             className="rs-btn rs-btn--primario"
-            disabled={trabajando || !acc.puedeCobrarAhora}
-            title={acc.motivoNoCobrar ?? undefined}
-            onClick={() => ejecutar(() => api.pedidos.cobrar(c.code, { esperaVersion: c.version }))}
+            disabled={trabajando || !acc.puedeCobrarAhora || claveSinAnotar}
+            title={acc.motivoNoCobrar ?? (claveSinAnotar ? "Anota primero la contraseña temporal del cliente" : undefined)}
+            onClick={() =>
+              ejecutar(async () => {
+                const r = await api.pedidos.cobrar(c.code, { esperaVersion: c.version });
+                setAvisoPuntos(textoPuntos(r.puntos) ?? "");
+              })
+            }
           >
             Cobrar {formatoDinero(c.total, moneda)}
           </button>

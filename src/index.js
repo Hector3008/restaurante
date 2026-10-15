@@ -42,13 +42,31 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
   core.documentos.registrarTipo(TIPO_PEDIDO);
   // Campos del plato que el catálogo valida por tipo (descripción y foto de la carta pública).
   core.catalogo.registrarEsquema?.({ campos: CAMPOS_PLATO });
+  // Fidelización: un pedido que pasa a `pagado` acumula puntos a su cliente (si dio su consentimiento).
+  // El monto sale del total guardado al pagar y el cliente de la instantánea del pedido.
+  core.fidelizacion?.registrarFuente({
+    tipo: TIPO_PEDIDO.tipo ?? "pedido",
+    estado: "pagado",
+    extraer: (d) => ({
+      clienteId: d.snapshot?.cliente?.clienteId ?? null,
+      monto: d.payload?.doc?.total ?? null,
+      detalle: "Pedido pagado",
+    }),
+  });
   const servicio = crearServicio(core);
 
   const router = express.Router();
   router.use(express.json());
   montarRutas(router, core, servicio);
   // Vista pública de la carta (sin sesión): /catalogo/:empresa y /publico/:empresa/...
-  montarRutasPublicas(router, crearPublico(core), fs.readFileSync(path.join(dist, "catalogo.html"), "utf8"));
+  const publico = crearPublico(core);
+  montarRutasPublicas(
+    router,
+    publico,
+    fs.readFileSync(path.join(dist, "catalogo.html"), "utf8"),
+    undefined,
+    core.cuentasCliente?.manejadores({ empresaDe: publico.empresaDe }) ?? null,
+  );
   router.use(
     express.static(dist, {
       index: "index.html",
