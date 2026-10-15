@@ -154,7 +154,16 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
       )}
 
       {nuevo && !valor && (
-        <form className="rs-form rs-cliente__nuevo" onSubmit={crear}>
+        // No es un <form>: el selector va dentro del formulario del pedido y un formulario anidado enviaría el pedido.
+        <div
+          className="rs-form rs-cliente__nuevo"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.target.tagName === "INPUT") {
+              e.preventDefault();
+              crear(e);
+            }
+          }}
+        >
           <label className="campo">
             <span>Nombre</span>
             <input value={nuevo.nombre} maxLength={100} onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })} />
@@ -174,10 +183,10 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
             </label>
           )}
           <div className="rs-acciones">
-            <button type="submit" className="rs-btn rs-btn--primario" disabled={guardando}>{guardando ? "Guardando…" : "Guardar cliente"}</button>
+            <button type="button" className="rs-btn rs-btn--primario" disabled={guardando} onClick={crear}>{guardando ? "Guardando…" : "Guardar cliente"}</button>
             <button type="button" className="rs-btn" onClick={() => { setNuevo(null); setError(""); }}>Cancelar</button>
           </div>
-        </form>
+        </div>
       )}
 
       {error && <p className="aviso-error" role="alert">{error}</p>}
