@@ -22,7 +22,8 @@ export default function ListaPedidos({ permisos, alCocina, alAbrir, alCrear }) {
   const [pedidos, setPedidos] = useState(null);
   const [error, setError] = useState("");
   const [actualizando, setActualizando] = useState(false);
-  const [moviendo, setMoviendo] = useState(null); // code del ítem o del pedido en curso
+  const [moviendo, setMoviendo] = useState(() => new Set()); // códigos de ítems o pedidos en curso: cada botón bloquea solo el suyo
+  const enviando = useRef(new Set());
   const filtroRef = useRef(filtro);
   filtroRef.current = filtro;
 
@@ -58,8 +59,9 @@ export default function ListaPedidos({ permisos, alCocina, alAbrir, alCrear }) {
   // Una acción rápida lleva la versión que se ve: si otra persona cambió algo antes, el servidor responde
   // 409 y la lista se recarga con lo último.
   async function ejecutar(clave, texto, fn) {
-    if (moviendo) return;
-    setMoviendo(clave);
+    if (enviando.current.has(clave)) return;
+    enviando.current.add(clave);
+    setMoviendo(new Set(enviando.current));
     setError("");
     try {
       await fn();
@@ -67,7 +69,8 @@ export default function ListaPedidos({ permisos, alCocina, alAbrir, alCrear }) {
       setError(`${texto}: ${mensajeDeError(e)}`);
     } finally {
       await cargar(true);
-      setMoviendo(null);
+      enviando.current.delete(clave);
+      setMoviendo(new Set(enviando.current));
     }
   }
   const pasoItem = (c, i, ruta) => ejecutar(i.code, `${c.code}`, () => api.items.paso(i.code, ruta, { esperaVersion: i.version }));
@@ -140,8 +143,8 @@ export default function ListaPedidos({ permisos, alCocina, alAbrir, alCrear }) {
                           <span>{i.cantidad} × {i.nombre}</span>
                           <span className={`rs-estado rs-estado--${i.estado}`}>{ESTADOS_ITEM[i.estado] ?? i.estado}</span>
                           {entregar && (
-                            <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo !== null} onClick={() => pasoItem(c, i, "entregar")}>
-                              {moviendo === i.code ? "…" : "Entregar"}
+                            <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo.has(i.code)} onClick={() => pasoItem(c, i, "entregar")}>
+                              {moviendo.has(i.code) ? "…" : "Entregar"}
                             </button>
                           )}
                         </li>
@@ -153,8 +156,8 @@ export default function ListaPedidos({ permisos, alCocina, alAbrir, alCrear }) {
                 {c.estado === "abierto" && r.activos > 0 && (
                   <div className="rs-tarjeta__acciones">
                     {acc.puedeCobrarAhora ? (
-                      <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo !== null} onClick={() => cobrar(c)}>
-                        {moviendo === c.code ? "Cobrando…" : `Cobrar ${formatoDinero(c.total, c.moneda)}`}
+                      <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo.has(c.code) || c.items.some((i) => moviendo.has(i.code))} onClick={() => cobrar(c)}>
+                        {moviendo.has(c.code) ? "Cobrando…" : `Cobrar ${formatoDinero(c.total, c.moneda)}`}
                       </button>
                     ) : (
                       <small className="rs-vacio">{r.enCocina + r.listos > 0 ? `${r.entregados + r.listos}/${r.activos} listos o entregados` : ""}</small>

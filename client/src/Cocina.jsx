@@ -10,7 +10,7 @@ const REFRESCO_MS = 10000;
 export default function Cocina({ puedeMarcar, alVolver }) {
   const [items, setItems] = useState(null);
   const [error, setError] = useState("");
-  const [moviendo, setMoviendo] = useState(null);
+  const [moviendo, setMoviendo] = useState(() => new Set()); // ítems que se están marcando: cada botón bloquea solo el suyo
   const [ahora, setAhora] = useState(Date.now());
   const viva = useRef(true);
 
@@ -39,9 +39,11 @@ export default function Cocina({ puedeMarcar, alVolver }) {
     };
   }, [cargar]);
 
+  const enviando = useRef(new Set());
   async function listo(p) {
-    if (moviendo) return;
-    setMoviendo(p.code);
+    if (enviando.current.has(p.code)) return;
+    enviando.current.add(p.code);
+    setMoviendo(new Set(enviando.current));
     setError("");
     try {
       await api.items.paso(p.code, "lista", { esperaVersion: p.version });
@@ -49,7 +51,8 @@ export default function Cocina({ puedeMarcar, alVolver }) {
       setError(`${p.code}: ${mensajeDeError(e)}`);
     } finally {
       await cargar(true);
-      if (viva.current) setMoviendo(null);
+      enviando.current.delete(p.code);
+      if (viva.current) setMoviendo(new Set(enviando.current));
     }
   }
 
@@ -86,8 +89,8 @@ export default function Cocina({ puedeMarcar, alVolver }) {
               </div>
               {p.notas && <small className="rs-nota-cocina">{p.notas}</small>}
               {puedeMarcar && (
-                <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo !== null} onClick={() => listo(p)}>
-                  {moviendo === p.code ? "Marcando…" : "Listo"}
+                <button type="button" className="rs-btn rs-btn--primario" disabled={moviendo.has(p.code)} onClick={() => listo(p)}>
+                  {moviendo.has(p.code) ? "Marcando…" : "Listo"}
                 </button>
               )}
             </li>

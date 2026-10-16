@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
 import SelectorCliente from "./SelectorCliente.jsx";
 import {
@@ -35,7 +35,11 @@ function Fila({ etiqueta, children }) {
 export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState("");
-  const [trabajando, setTrabajando] = useState(false);
+  // Qué se está enviando ahora: cada botón bloquea solo lo suyo y las demás acciones siguen disponibles,
+  // así se pueden lanzar varias a la vez. Claves: el código del ítem, o "pedido" para lo que toca al pedido entero.
+  const [enCurso, setEnCurso] = useState(() => new Set());
+  const enCursoRef = useRef(new Set());
+  const ultima = useRef(0); // una respuesta vieja nunca pisa a una más nueva
   const [anulando, setAnulando] = useState(null); // { tipo: "pedido" } | { tipo: "ítem", ítem }
   const [editandoPrecio, setEditandoPrecio] = useState(null); // { code, texto }
   const [motivo, setMotivo] = useState("");
@@ -48,7 +52,9 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   // `conservarError`: tras un conflicto se recarga pero el aviso tiene que seguir a la vista.
   const cargar = useCallback(async (conservarError = false) => {
     try {
-      setC(await api.pedidos.obtener(code));
+      const n = ++ultima.current;
+      const d = await api.pedidos.obtener(code);
+      if (n === ultima.current) setC(d);
       if (!conservarError) setError("");
     } catch (e) {
       setError(e.status === 404 ? "No se encontró este pedido." : mensajeDeError(e));
@@ -60,24 +66,31 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
     cargar();
   }, [cargar]);
 
-  async function ejecutar(fn) {
-    if (trabajando) return;
-    setTrabajando(true);
+  const marcar = (claves, activo) => {
+    for (const k of claves) activo ? enCursoRef.current.add(k) : enCursoRef.current.delete(k);
+    setEnCurso(new Set(enCursoRef.current));
+  };
+  // Un ítem está ocupado si se está enviando algo suyo o algo del pedido entero; lo del pedido entero
+  // espera a que no haya nada más en curso.
+  const ocupado = (k) => enCurso.has(k) || enCurso.has("pedido");
+  const ocupadoPedido = enCurso.size > 0;
+
+  // `claves`: qué se bloquea mientras dura. `alTerminar`: lo que se limpia al salir bien (solo el formulario de esta acción).
+  async function ejecutar(claves, fn, alTerminar) {
+    const ks = [].concat(claves);
+    const ref = enCursoRef.current;
+    if (ks.some((k) => ref.has(k)) || ref.has("pedido") || (ks.includes("pedido") && ref.size > 0)) return;
+    marcar(ks, true);
     setError("");
     try {
       await fn();
-      setAnulando(null);
-      setEditando(null);
-      setClienteItem(null);
-      setEditandoPrecio(null);
-      setMotivo("");
-      setDetalleMotivo("");
+      alTerminar?.();
       await cargar();
     } catch (e) {
       setError(mensajeDeError(e));
       if (["CONFLICTO_VERSION", "TRANSICION_INVALIDA", "ESTADO_INVALIDO"].includes(e.codigo)) await cargar(true);
     } finally {
-      setTrabajando(false);
+      marcar(ks, false);
     }
   }
 
@@ -94,7 +107,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   const res = resumenItems(c.items);
   const grupos = acc.dividir ? gruposPorCliente(c) : [];
   const cobrarItems = (codigos) =>
-    ejecutar(async () => {
+    ejecutar(codigos, async () => {
       const r = await api.pedidos.cobrarItems(c.code, { items: codigos });
       setAvisoPuntos(textoPuntos(r.puntos) ?? "");
     });
@@ -131,10 +144,10 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       {c.estado === "abierto" && permite(permisos, "documento:editar") && permite(permisos, "cliente:leer") && (
         <SelectorCliente
           valor={c.cliente ? { id: c.cliente.id, nombre: c.cliente.nombre, telefono: c.snapshot?.cliente?.telefono ?? null } : null}
-          alCambiar={(cl) => ejecutar(() => api.pedidos.asociarCliente(c.code, { clienteId: cl?.id ?? null, esperaVersion: c.version }))}
+          alCambiar={(cl) => ejecutar("pedido", () => api.pedidos.asociarCliente(c.code, { clienteId: cl?.id ?? null, esperaVersion: c.version }))}
           puedeCrear={permite(permisos, "cliente:crear")}
           puedeCuenta={permite(permisos, "cliente:cuenta")}
-          deshabilitado={trabajando}
+          deshabilitado={ocupadoPedido}
           alPendiente={setClaveSinAnotar}
         />
       )}
@@ -169,10 +182,10 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                 <div>
                   <SelectorCliente
                     valor={i.cliente ? { id: i.cliente.id, nombre: i.cliente.nombre } : null}
-                    alCambiar={(cl) => ejecutar(() => api.items.asociarCliente(i.code, { clienteId: cl?.id ?? null, esperaVersion: i.version }))}
+                    alCambiar={(cl) => ejecutar(i.code, () => api.items.asociarCliente(i.code, { clienteId: cl?.id ?? null, esperaVersion: i.version }), () => setClienteItem(null))}
                     puedeCrear={permite(permisos, "cliente:crear")}
                     puedeCuenta={permite(permisos, "cliente:cuenta")}
-                    deshabilitado={trabajando}
+                    deshabilitado={ocupado(i.code)}
                     alPendiente={setClaveSinAnotar}
                   />
                   <button type="button" className="rs-btn" onClick={() => setClienteItem(null)}>Cerrar</button>
@@ -183,7 +196,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                   className="rs-precio"
                   onSubmit={(ev) => {
                     ev.preventDefault();
-                    if (nuevoPrecio.ok) ejecutar(() => api.items.paso(i.code, "precio", { precio: nuevoPrecio.precio, esperaVersion: i.version }));
+                    if (nuevoPrecio.ok) ejecutar(i.code, () => api.items.paso(i.code, "precio", { precio: nuevoPrecio.precio, esperaVersion: i.version }), () => setEditandoPrecio(null));
                   }}
                 >
                   <label>
@@ -197,7 +210,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                       onChange={(ev) => setEditandoPrecio({ code: i.code, texto: ev.target.value })}
                     />
                   </label>
-                  <button type="submit" className="rs-btn rs-btn--primario" disabled={trabajando || !nuevoPrecio.ok}>Guardar</button>
+                  <button type="submit" className="rs-btn rs-btn--primario" disabled={ocupado(i.code) || !nuevoPrecio.ok}>Guardar</button>
                   <button type="button" className="rs-btn" onClick={() => setEditandoPrecio(null)}>Cancelar</button>
                   {editandoPrecio.texto !== "" && !nuevoPrecio.ok && <small className="rs-precio__aviso" role="alert">{nuevoPrecio.error}</small>}
                 </form>
@@ -205,27 +218,27 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
               {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || puedeCobrarItem || (puedeCliente && clienteItem !== i.code) || (precio && editandoPrecio?.code !== i.code)) && (
                 <div className="rs-acciones">
                   {puedeCobrarItem && (
-                    <button type="button" className="rs-btn rs-btn--primario" disabled={trabajando || claveSinAnotar} onClick={() => cobrarItems([i.code])}>
-                      Cobrar {formatoDinero(i.subtotal, moneda)}
+                    <button type="button" className="rs-btn rs-btn--primario" disabled={ocupado(i.code) || claveSinAnotar} onClick={() => cobrarItems([i.code])}>
+                      {ocupado(i.code) ? "Cobrando…" : `Cobrar ${formatoDinero(i.subtotal, moneda)}`}
                     </button>
                   )}
                   {puedeCliente && clienteItem !== i.code && permite(permisos, "cliente:leer") && (
-                    <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setClienteItem(i.code)}>
+                    <button type="button" className="rs-btn" disabled={ocupado(i.code)} onClick={() => setClienteItem(i.code)}>
                       {i.cliente ? "Cambiar cliente" : "Asignar cliente"}
                     </button>
                   )}
                   {pasos.filter((p) => p.id === "entregar").map((p) => (
-                    <button key={p.id} type="button" className="rs-btn rs-btn--primario" disabled={trabajando} onClick={() => ejecutar(() => api.items.paso(i.code, p.id, { esperaVersion: i.version }))}>
-                      {p.etiqueta}
+                    <button key={p.id} type="button" className="rs-btn rs-btn--primario" disabled={ocupado(i.code)} onClick={() => ejecutar(i.code, () => api.items.paso(i.code, p.id, { esperaVersion: i.version }))}>
+                      {ocupado(i.code) ? "Enviando…" : p.etiqueta}
                     </button>
                   ))}
                   {precio && editandoPrecio?.code !== i.code && (
-                    <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setEditandoPrecio({ code: i.code, texto: i.precio ?? "" })}>
+                    <button type="button" className="rs-btn" disabled={ocupado(i.code)} onClick={() => setEditandoPrecio({ code: i.code, texto: i.precio ?? "" })}>
                       {i.precio === null ? "Poner precio" : "Cambiar precio"}
                     </button>
                   )}
                   {anular && (
-                    <button type="button" className="rs-btn rs-btn--peligro" disabled={trabajando} onClick={() => setAnulando({ tipo: "item", item: i })}>
+                    <button type="button" className="rs-btn rs-btn--peligro" disabled={ocupado(i.code)} onClick={() => setAnulando({ tipo: "item", item: i })}>
                       Anular
                     </button>
                   )}
@@ -258,7 +271,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                 </div>
                 {g.entregados.length > 0 && (
                   <div className="rs-acciones">
-                    <button type="button" className="rs-btn rs-btn--primario" disabled={trabajando || claveSinAnotar} onClick={() => cobrarItems(g.entregados)}>
+                    <button type="button" className="rs-btn rs-btn--primario" disabled={g.entregados.some(ocupado) || claveSinAnotar} onClick={() => cobrarItems(g.entregados)}>
                       Cobrar {g.cliente ? `a ${g.cliente.nombre}` : "estos ítems"}
                     </button>
                   </div>
@@ -271,10 +284,10 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
 
       <div className="rs-acciones">
         {acc.agregar && (
-          <button type="button" className="rs-btn" disabled={trabajando} onClick={() => alPedirMas(c)}>Pedir más</button>
+          <button type="button" className="rs-btn" disabled={ocupadoPedido} onClick={() => alPedirMas(c)}>Pedir más</button>
         )}
         {acc.editarDatos && !editando && (
-          <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setEditando(formularioDesdePedido(c))}>
+          <button type="button" className="rs-btn" disabled={ocupadoPedido} onClick={() => setEditando(formularioDesdePedido(c))}>
             {doc.canal === "salon" ? "Cambiar mesa y notas" : doc.canal === "llevar" ? "Cambiar nombre y notas" : "Editar datos de entrega"}
           </button>
         )}
@@ -282,10 +295,10 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           <button
             type="button"
             className="rs-btn rs-btn--primario"
-            disabled={trabajando || !acc.puedeCobrarAhora || claveSinAnotar}
+            disabled={ocupadoPedido || !acc.puedeCobrarAhora || claveSinAnotar}
             title={acc.motivoNoCobrar ?? (claveSinAnotar ? "Anota primero la contraseña temporal del cliente" : undefined)}
             onClick={() =>
-              ejecutar(async () => {
+              ejecutar("pedido", async () => {
                 const r = await api.pedidos.cobrar(c.code, { esperaVersion: c.version });
                 setAvisoPuntos(textoPuntos(r.puntos) ?? "");
               })
@@ -295,7 +308,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           </button>
         )}
         {acc.anular && !anulando && (
-          <button type="button" className="rs-btn rs-btn--peligro" disabled={trabajando} onClick={() => setAnulando({ tipo: "pedido" })}>Anular pedido</button>
+          <button type="button" className="rs-btn rs-btn--peligro" disabled={ocupadoPedido} onClick={() => setAnulando({ tipo: "pedido" })}>Anular pedido</button>
         )}
       </div>
       {acc.cobrar && acc.motivoNoCobrar && <small className="rs-vacio">{acc.motivoNoCobrar}</small>}
@@ -308,7 +321,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
             // validarFormulario también pide ítems: aquí no se editan, se le pasa uno de relleno
             const problema = validarFormulario({ ...editando, items: [1] });
             if (problema) return setError(problema);
-            ejecutar(() => api.pedidos.editar(c.code, cuerpoDatos(editando, c.version)));
+            ejecutar("pedido", () => api.pedidos.editar(c.code, cuerpoDatos(editando, c.version)), () => setEditando(null));
           }}
         >
           <h2 className="rs-subtitulo">Editar datos del pedido</h2>
@@ -327,7 +340,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           )}
           <label className="campo"><span>Notas del pedido (opcional)</span><input value={editando.notas} maxLength={500} onChange={(e) => setEditando({ ...editando, notas: e.target.value })} /></label>
           <div className="rs-acciones">
-            <button type="submit" className="rs-btn rs-btn--primario" disabled={trabajando}>Guardar cambios</button>
+            <button type="submit" className="rs-btn rs-btn--primario" disabled={ocupadoPedido}>Guardar cambios</button>
             <button type="button" className="rs-btn" onClick={() => setEditando(null)}>Cancelar</button>
           </div>
         </form>
@@ -338,10 +351,17 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           className="rs-form rs-anular"
           onSubmit={(e) => {
             e.preventDefault();
-            ejecutar(() =>
-              anulando.tipo === "pedido"
-                ? api.pedidos.anular(c.code, { esperaVersion: c.version, motivo: cuerpoMotivo })
-                : api.items.paso(anulando.item.code, "anular", { esperaVersion: anulando.item.version, motivo: cuerpoMotivo }),
+            ejecutar(
+              anulando.tipo === "pedido" ? "pedido" : anulando.item.code,
+              () =>
+                anulando.tipo === "pedido"
+                  ? api.pedidos.anular(c.code, { esperaVersion: c.version, motivo: cuerpoMotivo })
+                  : api.items.paso(anulando.item.code, "anular", { esperaVersion: anulando.item.version, motivo: cuerpoMotivo }),
+              () => {
+                setAnulando(null);
+                setMotivo("");
+                setDetalleMotivo("");
+              },
             );
           }}
         >
@@ -361,7 +381,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
             <input value={detalleMotivo} onChange={(e) => setDetalleMotivo(e.target.value)} maxLength={200} />
           </label>
           <div className="rs-acciones">
-            <button type="submit" className="rs-btn rs-btn--peligro" disabled={trabajando || !motivo}>Confirmar anulación</button>
+            <button type="submit" className="rs-btn rs-btn--peligro" disabled={(anulando.tipo === "pedido" ? ocupadoPedido : ocupado(anulando.item.code)) || !motivo}>Confirmar anulación</button>
             <button type="button" className="rs-btn" onClick={() => setAnulando(null)}>No anular</button>
           </div>
         </form>
