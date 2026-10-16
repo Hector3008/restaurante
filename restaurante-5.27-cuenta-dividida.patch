@@ -1,0 +1,1091 @@
+diff --git a/client/src/DetallePedido.jsx b/client/src/DetallePedido.jsx
+index eadb443..4f1e12f 100644
+--- a/client/src/DetallePedido.jsx
++++ b/client/src/DetallePedido.jsx
+@@ -8,6 +8,8 @@ import {
+   MOTIVOS_ANULACION,
+   accionesPedido,
+   accionesItem,
++  gruposPorCliente,
++  resumenItems,
+   cuerpoDatos,
+   formularioDesdePedido,
+   validarFormulario,
+@@ -41,6 +43,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+   const [editando, setEditando] = useState(null); // formulario de los datos del pedido (mesa, a nombre de, entrega, notas)
+   const [avisoPuntos, setAvisoPuntos] = useState(""); // lo que ganó el cliente al cobrar (sobrevive a la recarga)
+   const [claveSinAnotar, setClaveSinAnotar] = useState(false);
++  const [clienteItem, setClienteItem] = useState(null); // código del ítem al que se le está eligiendo cliente
+ 
+   // `conservarError`: tras un conflicto se recarga pero el aviso tiene que seguir a la vista.
+   const cargar = useCallback(async (conservarError = false) => {
+@@ -65,6 +68,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+       await fn();
+       setAnulando(null);
+       setEditando(null);
++      setClienteItem(null);
+       setEditandoPrecio(null);
+       setMotivo("");
+       setDetalleMotivo("");
+@@ -87,6 +91,13 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+ 
+   const doc = c.doc ?? {};
+   const acc = accionesPedido(c, permisos);
++  const res = resumenItems(c.items);
++  const grupos = acc.dividir ? gruposPorCliente(c) : [];
++  const cobrarItems = (codigos) =>
++    ejecutar(async () => {
++      const r = await api.pedidos.cobrarItems(c.code, { items: codigos });
++      setAvisoPuntos(textoPuntos(r.puntos) ?? "");
++    });
+   const moneda = c.moneda;
+   const cuerpoMotivo = { codigo: motivo, ...(detalleMotivo.trim() ? { detalle: detalleMotivo.trim() } : {}) };
+ 
+@@ -131,7 +142,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+       <h2 className="rs-subtitulo">Ítems</h2>
+       <ul className="rs-lineas">
+         {c.items.map((i) => {
+-          const { pasos, anular, precio } = accionesItem(i.estado, permisos);
++          const { pasos, anular, precio, cliente: puedeCliente, cobrar: puedeCobrarItem } = accionesItem(i.estado, permisos);
+           const nuevoPrecio = editandoPrecio?.code === i.code ? cuerpoPrecio(editandoPrecio.texto) : null;
+           const enPedidoAbierto = c.estado === "abierto";
+           return (
+@@ -149,6 +160,24 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+                 <small>Precio cambiado: {formatoDinero(i.precio, moneda)} (catálogo: {formatoDinero(i.precioCatalogo, moneda)})</small>
+               )}
+               {i.notas && <small>{i.notas}</small>}
++              {(i.cliente || (c.cliente && i.estado !== "anulado")) && (
++                <small>
++                  {i.cliente ? `Cliente: ${i.cliente.nombre}` : `Cuenta de ${c.cliente.nombre}`}
++                </small>
++              )}
++              {enPedidoAbierto && puedeCliente && clienteItem === i.code && permite(permisos, "cliente:leer") && (
++                <div>
++                  <SelectorCliente
++                    valor={i.cliente ? { id: i.cliente.id, nombre: i.cliente.nombre } : null}
++                    alCambiar={(cl) => ejecutar(() => api.items.asociarCliente(i.code, { clienteId: cl?.id ?? null, esperaVersion: i.version }))}
++                    puedeCrear={permite(permisos, "cliente:crear")}
++                    puedeCuenta={permite(permisos, "cliente:cuenta")}
++                    deshabilitado={trabajando}
++                    alPendiente={setClaveSinAnotar}
++                  />
++                  <button type="button" className="rs-btn" onClick={() => setClienteItem(null)}>Cerrar</button>
++                </div>
++              )}
+               {enPedidoAbierto && precio && editandoPrecio?.code === i.code && (
+                 <form
+                   className="rs-precio"
+@@ -173,8 +202,18 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+                   {editandoPrecio.texto !== "" && !nuevoPrecio.ok && <small className="rs-precio__aviso" role="alert">{nuevoPrecio.error}</small>}
+                 </form>
+               )}
+-              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || (precio && editandoPrecio?.code !== i.code)) && (
++              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || puedeCobrarItem || (puedeCliente && clienteItem !== i.code) || (precio && editandoPrecio?.code !== i.code)) && (
+                 <div className="rs-acciones">
++                  {puedeCobrarItem && (
++                    <button type="button" className="rs-btn rs-btn--primario" disabled={trabajando || claveSinAnotar} onClick={() => cobrarItems([i.code])}>
++                      Cobrar {formatoDinero(i.subtotal, moneda)}
++                    </button>
++                  )}
++                  {puedeCliente && clienteItem !== i.code && permite(permisos, "cliente:leer") && (
++                    <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setClienteItem(i.code)}>
++                      {i.cliente ? "Cambiar cliente" : "Asignar cliente"}
++                    </button>
++                  )}
+                   {pasos.filter((p) => p.id === "entregar").map((p) => (
+                     <button key={p.id} type="button" className="rs-btn rs-btn--primario" disabled={trabajando} onClick={() => ejecutar(() => api.items.paso(i.code, p.id, { esperaVersion: i.version }))}>
+                       {p.etiqueta}
+@@ -199,8 +238,37 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+       <p className="rs-total">
+         Total: <strong>{formatoDinero(c.total, moneda)}</strong>
+         {c.total === null && <small> · hay ítems sin precio</small>}
++        {c.estado === "abierto" && res.pagados > 0 && (
++          <small> · cobrado {formatoDinero(res.cobrado, moneda)} · falta {formatoDinero(res.porCobrar, moneda)}</small>
++        )}
+       </p>
+ 
++      {grupos.length > 0 && (grupos.length > 1 || res.pagados > 0) && (
++        <>
++          <h2 className="rs-subtitulo">Dividir la cuenta</h2>
++          <ul className="rs-lineas">
++            {grupos.map((g) => (
++              <li key={g.clave} className="rs-linea">
++                <div className="rs-linea__cab">
++                  <span>
++                    <strong>{g.cliente ? g.cliente.nombre : "Sin cliente"}</strong>
++                    <small> · {g.items.length} ítem{g.items.length === 1 ? "" : "s"}{g.enCurso ? ` (${g.enCurso} sin entregar)` : ""}</small>
++                  </span>
++                  <span className="rs-num">{g.sinPrecio ? "—" : formatoDinero(g.subtotal, moneda)}</span>
++                </div>
++                {g.entregados.length > 0 && (
++                  <div className="rs-acciones">
++                    <button type="button" className="rs-btn rs-btn--primario" disabled={trabajando || claveSinAnotar} onClick={() => cobrarItems(g.entregados)}>
++                      Cobrar {g.cliente ? `a ${g.cliente.nombre}` : "estos ítems"}
++                    </button>
++                  </div>
++                )}
++              </li>
++            ))}
++          </ul>
++        </>
++      )}
++
+       <div className="rs-acciones">
+         {acc.agregar && (
+           <button type="button" className="rs-btn" disabled={trabajando} onClick={() => alPedirMas(c)}>Pedir más</button>
+@@ -223,7 +291,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+               })
+             }
+           >
+-            Cobrar {formatoDinero(c.total, moneda)}
++            {res.pagados > 0 ? "Cobrar lo que falta" : "Cobrar todo"} {formatoDinero(res.porCobrar, moneda)}
+           </button>
+         )}
+         {acc.anular && !anulando && (
+diff --git a/client/src/api.js b/client/src/api.js
+index e58c7d1..e3889e0 100644
+--- a/client/src/api.js
++++ b/client/src/api.js
+@@ -87,6 +87,8 @@ export const api = {
+     editar: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}`, cuerpo),
+     // clienteId: id del cliente o null para quitarlo (solo con el pedido abierto)
+     asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}/cliente`, cuerpo),
++    // Cuenta dividida: cobra solo estos ítems entregados ({ items: ["DOC_ITEM-…"] }); el pedido se cierra solo con el último
++    cobrarItems: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar-items`, cuerpo),
+     cobrar: (code, cuerpo = {}) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar`, cuerpo),
+     anular: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/anular`, cuerpo),
+   },
+@@ -96,6 +98,8 @@ export const api = {
+     listar: async (estado) => lista(await pedir("GET", `restaurante/items${consulta(estado, 200)}`), "items"),
+     // ruta: lista | entregar | anular
+     paso: (code, ruta, cuerpo = {}) => pedir("POST", `restaurante/items/${enc(code)}/${ruta}`, cuerpo),
++    // A quién se le cobra el ítem: clienteId del cliente o null (vuelve al cliente del pedido)
++    asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/items/${enc(code)}/cliente`, cuerpo),
+   },
+ 
+   // Clientes (cliente:leer / cliente:crear / cliente:cuenta): buscar por nombre, teléfono, correo o @usuario.
+diff --git a/client/src/pedidos.js b/client/src/pedidos.js
+index be029eb..0abbec4 100644
+--- a/client/src/pedidos.js
++++ b/client/src/pedidos.js
+@@ -11,7 +11,7 @@ export function permite(permisos, requerido) {
+ }
+ 
+ export const ESTADOS_PEDIDO = { abierto: "Abierto", pagado: "Pagado", anulado: "Anulado" };
+-export const ESTADOS_ITEM = { en_cocina: "En cocina", lista: "Lista", entregado: "Entregado", anulado: "Anulado" };
++export const ESTADOS_ITEM = { en_cocina: "En cocina", lista: "Lista", entregado: "Entregado", pagado: "Pagado", anulado: "Anulado" };
+ export const CANALES = { salon: "Salón", llevar: "Para llevar", delivery: "Delivery" };
+ // Mismos que MOTIVOS_ANULACION del servicio (src/tipos.js)
+ export const MOTIVOS_ANULACION = [
+@@ -223,8 +223,11 @@ export function accionesItem(estado, permisos) {
+     editar &&
+     (estado === "en_cocina" ? permite(permisos, "estacion:creacion") : ["lista", "entregado"].includes(estado) && permite(permisos, "estacion:administracion"));
+   // Corregir el precio sin anular: administración, en cualquier estado vivo. Ocultar el botón NO es seguridad.
+-  const precio = editar && estado !== "anulado" && permite(permisos, "estacion:administracion");
+-  return { pasos, anular: Boolean(anular), precio: Boolean(precio) };
++  const precio = editar && estado !== "anulado" && estado !== "pagado" && permite(permisos, "estacion:administracion");
++  // Cuenta dividida: a quién se le cobra el ítem (quien edita pedidos) y cobrarlo solo (administración, ya entregado).
++  const cliente = editar && ["en_cocina", "lista", "entregado"].includes(estado);
++  const cobrar = editar && estado === "entregado" && permite(permisos, "estacion:administracion");
++  return { pasos, anular: Boolean(anular), precio: Boolean(precio), cliente: Boolean(cliente), cobrar: Boolean(cobrar) };
+ }
+ 
+ /** Lo que se envía a POST /items/:code/precio: el precio es obligatorio (para quitarlo se anula y se pide otro). */
+@@ -235,26 +238,66 @@ export function cuerpoPrecio(texto) {
+   return { ok: true, precio: p.valor };
+ }
+ 
+-/** Cuántos ítems hay en cada estado y el total de lo que se cobra. */
++/**
++ * Cuántos ítems hay en cada estado y el total de lo que se cobra. `total` es de todo lo no anulado; `cobrado` lo ya
++ * pagado y `porCobrar` lo que falta (null si algún ítem de esa parte no tiene precio).
++ */
+ export function resumenItems(items) {
+-  const r = { enCocina: 0, listos: 0, entregados: 0, anulados: 0, total: 0, activos: 0, sinPrecio: false };
++  const r = { enCocina: 0, listos: 0, entregados: 0, pagados: 0, anulados: 0, total: 0, cobrado: 0, porCobrar: 0, activos: 0, sinPrecio: false };
+   let centavos = 0;
++  let cobrado = 0;
++  let falta = 0;
++  let sinPrecioFalta = false;
+   for (const i of items ?? []) {
+     if (i.estado === "en_cocina") r.enCocina++;
+     else if (i.estado === "lista") r.listos++;
+     else if (i.estado === "entregado") r.entregados++;
++    else if (i.estado === "pagado") r.pagados++;
+     else if (i.estado === "anulado") {
+       r.anulados++;
+       continue;
+     }
+     r.activos++;
+-    if (i.subtotal === null || i.subtotal === undefined) r.sinPrecio = true;
+-    else centavos += Math.round(Number(i.subtotal) * 100);
++    const sinPrecio = i.subtotal === null || i.subtotal === undefined;
++    if (sinPrecio) r.sinPrecio = true;
++    if (sinPrecio && i.estado !== "pagado") sinPrecioFalta = true;
++    if (!sinPrecio) {
++      const c = Math.round(Number(i.subtotal) * 100);
++      centavos += c;
++      if (i.estado === "pagado") cobrado += c;
++      else falta += c;
++    }
+   }
+   r.total = r.sinPrecio ? null : centavos / 100;
++  r.cobrado = cobrado / 100;
++  r.porCobrar = sinPrecioFalta ? null : falta / 100;
+   return r;
+ }
+ 
++/**
++ * Cuenta dividida: los ítems de un pedido agrupados por a quién se le cobran (el cliente del ítem, o el del pedido,
++ * o nadie). Solo cuenta lo que falta cobrar. Cada grupo: { clave, cliente, items, entregados, subtotal, sinPrecio }
++ * donde `entregados` son los códigos que ya se pueden cobrar y `subtotal` suma los entregados.
++ */
++export function gruposPorCliente(pedido) {
++  const grupos = new Map();
++  for (const i of pedido?.items ?? []) {
++    if (i.estado === "anulado" || i.estado === "pagado") continue;
++    const cliente = i.cliente ?? pedido?.cliente ?? null;
++    const clave = cliente?.id ?? "sin-cliente";
++    const g = grupos.get(clave) ?? { clave, cliente, items: [], entregados: [], subtotal: 0, sinPrecio: false, enCurso: 0 };
++    g.items.push(i);
++    if (i.estado === "entregado") {
++      g.entregados.push(i.code);
++      if (i.subtotal === null || i.subtotal === undefined) g.sinPrecio = true;
++      else g.subtotal = Math.round((g.subtotal + Number(i.subtotal)) * 100) / 100;
++    } else g.enCurso++;
++    grupos.set(clave, g);
++  }
++  // Los que tienen cliente primero, por nombre; el grupo sin cliente al final
++  return [...grupos.values()].sort((a, b) => (a.cliente ? 0 : 1) - (b.cliente ? 0 : 1) || (a.cliente?.nombre ?? "").localeCompare(b.cliente?.nombre ?? ""));
++}
++
+ /**
+  * Acciones de un pedido. Cobrar es de todo el pedido y solo cuando todos los ítems ya se entregaron (o se
+  * anuló), igual que en el servidor; `motivoNoCobrar` explica por qué todavía no.
+@@ -266,14 +309,17 @@ export function accionesPedido(pedido, permisos) {
+   const r = resumenItems(pedido?.items);
+   let motivoNoCobrar = null;
+   if (r.enCocina + r.listos > 0) motivoNoCobrar = `Faltan ${r.enCocina + r.listos} item(s) por entregar.`;
+-  else if (r.entregados === 0) motivoNoCobrar = "No hay nada entregado que cobrar.";
++  else if (r.entregados === 0 && r.pagados === 0) motivoNoCobrar = "No hay nada entregado que cobrar.";
+   return {
+     agregar: abierto && permite(permisos, "documento:crear"),
+     editarDatos: abierto && editar,
+     cobrar: abierto && admin,
+     puedeCobrarAhora: abierto && admin && motivoNoCobrar === null,
+     motivoNoCobrar,
+-    anular: abierto && admin,
++    // Con ítems ya cobrados no se anula el pedido entero (se anulan los que faltan y el pedido se cierra solo)
++    anular: abierto && admin && r.pagados === 0,
++    // Hay algo para cobrar por separado (el botón de cada ítem y de cada comensal)
++    dividir: abierto && admin && r.entregados > 0,
+   };
+ }
+ 
+@@ -336,19 +382,33 @@ export function cuerpoClienteNuevo({ nombre, telefono, correo }) {
+   return { ok: true, cuerpo: { nombre: n, ...(t ? { telefono: t } : {}), ...(c ? { correo: c } : {}) } };
+ }
+ 
+-/** Frase para el cajero tras cobrar: cuántos puntos ganó el cliente, o por qué no. Null si el pedido no tenía cliente. */
++// Por qué no acumuló; `n` es el sujeto ("El cliente", "Ana")
++const MOTIVOS_PUNTOS = {
++  sin_consentimiento: (n) => `${n} no aceptó el programa de puntos: no acumula`,
++  deshabilitada: () => "el programa de puntos está desactivado",
++  sin_monto: () => "no hay un total para dar puntos",
++  sin_puntos: () => "este monto no alcanza para ganar puntos",
++  cliente_inactivo: (n) => `${n} está desactivado: no acumula`,
++  cliente_no_encontrado: () => "no se encontró al cliente: no acumula",
++};
++const ptos = (n) => `${n} punto${n === 1 ? "" : "s"}`;
++const porque = (motivo, nombre) => MOTIVOS_PUNTOS[motivo]?.(nombre) ?? null;
++
++/**
++ * Frase para el cajero tras cobrar: cuántos puntos ganó el cliente, o por qué no. Con varios clientes (cuenta
++ * dividida) dice uno por uno. Null si lo cobrado no tenía cliente.
++ */
+ export function textoPuntos(puntos) {
+   if (!puntos) return null;
+-  if (puntos.error) return "El pedido se cobró, pero no se pudieron registrar los puntos. Avisa a un administrador.";
+-  if (puntos.acumulados > 0)
+-    return `El cliente ganó ${puntos.acumulados} punto${puntos.acumulados === 1 ? "" : "s"}${puntos.saldo != null ? ` (saldo: ${puntos.saldo})` : ""}.`;
+-  const motivos = {
+-    sin_consentimiento: "El cliente no aceptó el programa de puntos: no acumula.",
+-    deshabilitada: "El programa de puntos está desactivado.",
+-    sin_monto: "El pedido no tiene un total para dar puntos.",
+-    sin_puntos: "Este monto no alcanza para ganar puntos.",
+-    cliente_inactivo: "El cliente está desactivado: no acumula.",
+-    cliente_no_encontrado: "No se encontró al cliente: no acumula.",
+-  };
+-  return motivos[puntos.motivo] ?? null;
++  if (puntos.clientes?.length > 1) {
++    const partes = puntos.clientes.map((c) =>
++      c.error ? `${c.nombre}: no se pudieron registrar sus puntos` : c.acumulados > 0 ? `${c.nombre} ganó ${ptos(c.acumulados)}` : porque(c.motivo, c.nombre) ?? `${c.nombre} no acumuló`,
++    );
++    return `${partes.join(" · ")}.`;
++  }
++  const quien = puntos.clientes?.[0]?.nombre || "El cliente";
++  if (puntos.error) return "Se cobró, pero no se pudieron registrar los puntos. Avisa a un administrador.";
++  if (puntos.acumulados > 0) return `${quien} ganó ${ptos(puntos.acumulados)}${puntos.saldo != null ? ` (saldo: ${puntos.saldo})` : ""}.`;
++  const m = porque(puntos.motivo, quien);
++  return m ? `${m[0].toUpperCase()}${m.slice(1)}.` : null;
+ }
+diff --git a/src/http.js b/src/http.js
+index 65d7061..4182524 100644
+--- a/src/http.js
++++ b/src/http.js
+@@ -30,6 +30,8 @@ function responder(res, e, next) {
+  *   PUT  /pedidos/:code  { esperaVersion?, mesa, referencia, entrega, notas }   documento:editar
+  *   PUT  /pedidos/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (solo abierto)
+  *   POST /pedidos/:code/cobrar  { esperaVersion?, clienteId? }   documento:editar + estación administración (el motor)
++ *   POST /pedidos/:code/cobrar-items  { items: ["DOC_ITEM-…"] }   igual (cuenta dividida: cobra solo esos ítems entregados;
++ *        el pedido se cierra solo cuando no queda nada por cobrar)
+  *   POST /pedidos/:code/anular  { motivo: { codigo, detalle? } }   igual
+  *
+  * Ítems (un ítem que se mueve por las estaciones; cocina trabaja con estos)
+@@ -37,6 +39,7 @@ function responder(res, e, next) {
+  *   GET  /items/:code                                   documento:leer
+  *   POST /items/:code/lista                             documento:editar + estación cocina (el motor)
+  *   POST /items/:code/entregar                          documento:editar
++ *   PUT  /items/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (a quién se le cobra el ítem)
+  *   POST /items/:code/precio  { precio }                documento:editar + estación administración (solo el precio)
+  *   POST /items/:code/anular  { motivo }                documento:editar (+ administración si ya salió de cocina)
+  */
+@@ -128,6 +131,13 @@ export function montarRutas(router, core, servicio) {
+       }),
+     );
+   pasoPedido("cobrar", "cobrar");
++  router.post(
++    "/pedidos/:code/cobrar-items",
++    ...editar("administracion"),
++    envolver(true, async (req, res) =>
++      res.status(200).json(await pedidos.cobrarItems({ ...base(req), code: req.params.code, items: req.body?.items })),
++    ),
++  );
+   pasoPedido("anular", "anular");
+ 
+   // ---------- ítems (ítems) ----------
+@@ -156,6 +166,14 @@ export function montarRutas(router, core, servicio) {
+   pasoItem("lista", "marcarLista", "cocina");
+   pasoItem("entregar", "entregar", "creacion");
+   pasoItem("anular", "anular", "creacion");
++  router.put(
++    "/items/:code/cliente",
++    ...editar("creacion"),
++    envolver(true, async (req, res) => {
++      const { esperaVersion, clienteId } = req.body ?? {};
++      res.status(200).json(await items.asociarCliente({ ...base(req), code: req.params.code, esperaVersion, clienteId: clienteId ?? null }));
++    }),
++  );
+   router.post(
+     "/items/:code/precio",
+     ...editar("administracion"),
+diff --git a/src/index.js b/src/index.js
+index 0cd82ac..eeb07cb 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -42,15 +42,15 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
+   core.documentos.registrarTipo(TIPO_PEDIDO);
+   // Campos del plato que el catálogo valida por tipo (descripción y foto de la carta pública).
+   core.catalogo.registrarEsquema?.({ campos: CAMPOS_PLATO });
+-  // Fidelización: un pedido que pasa a `pagado` acumula puntos a su cliente (si dio su consentimiento).
+-  // El monto sale del total guardado al pagar y el cliente de la instantánea del pedido.
++  // Fidelización: cada ítem que se paga acumula puntos a SU cliente (o, si no tiene, al del pedido), si dio su
++  // consentimiento. Los puntos van por ítem porque la cuenta se puede dividir (5.27): el monto es el subtotal del ítem.
+   core.fidelizacion?.registrarFuente({
+-    tipo: TIPO_PEDIDO.tipo ?? "pedido",
++    tipo: TIPO_ITEM.tipo ?? "doc_item",
+     estado: "pagado",
+     extraer: (d) => ({
+       clienteId: d.snapshot?.cliente?.clienteId ?? null,
+-      monto: d.payload?.doc?.total ?? null,
+-      detalle: "Pedido pagado",
++      monto: d.payload?.doc?.subtotal ?? null,
++      detalle: d.payload?.doc?.pedidoCode ? `Pedido ${d.payload.doc.pedidoCode} pagado` : "Pedido pagado",
+     }),
+   });
+   const servicio = crearServicio(core);
+diff --git a/src/servicio.js b/src/servicio.js
+index eea08bf..f28cb78 100644
+--- a/src/servicio.js
++++ b/src/servicio.js
+@@ -1,4 +1,4 @@
+-import { conEmpresa, permite } from "core";
++import { conEmpresa, permite, ErrorDocumento } from "core";
+ import { ErrorPedido } from "./errores.js";
+ import {
+   validarCode,
+@@ -12,7 +12,7 @@ import {
+ 
+ export const TIPO_ITEM = "doc_item";
+ export const TIPO_PEDIDO = "pedido";
+-const ESTADOS_ITEM_ACTIVOS = ["en_cocina", "lista", "entregado"];
++const ESTADOS_ITEM_ACTIVOS = ["en_cocina", "lista", "entregado", "pagado"];
+ 
+ /**
+  * Servicio del restaurante: dos cosas separadas (ver tipos.js).
+@@ -68,6 +68,10 @@ export function crearServicio(core) {
+       precioModificado: Boolean(s.precioModificado),
+       subtotal: x.subtotal ?? null,
+       moneda: x.moneda ?? null,
++      // A quién se le cobra este ítem (cuenta dividida). null: al cliente del pedido, si lo tiene.
++      cliente: d.snapshot?.cliente?.clienteId
++        ? { id: String(d.snapshot.cliente.clienteId), nombre: d.snapshot.cliente.nombre ?? "" }
++        : null,
+       creadoTs: d.createdAt ?? null,
+     };
+   };
+@@ -84,6 +88,10 @@ export function crearServicio(core) {
+     return centavos / 100;
+   }
+ 
++  // Suma de lo que falta por cobrar (todo lo que no está anulado ni pagado) y de lo ya cobrado.
++  const porCobrarDe = (items) => totalDe(items.filter((i) => i.estado !== "pagado"));
++  const cobradoDe = (items) => totalDe(items.filter((i) => i.estado === "pagado"));
++
+   const resumenPedido = (d, items) => {
+     const x = d.payload?.doc ?? {};
+     return {
+@@ -98,6 +106,9 @@ export function crearServicio(core) {
+         ? { id: String(d.snapshot.cliente.clienteId), nombre: d.snapshot.cliente.nombre ?? "" }
+         : null,
+       total: d.estado === "pagado" ? x.total ?? null : items ? totalDe(items) : x.total ?? null,
++      // Solo con el pedido abierto: lo ya cobrado a algunos ítems y lo que falta (null si algún ítem no tiene precio)
++      cobrado: d.estado === "abierto" && items ? cobradoDe(items) : null,
++      porCobrar: d.estado === "abierto" && items ? porCobrarDe(items) : null,
+       items: items ?? null,
+       creadoTs: d.createdAt ?? null,
+     };
+@@ -278,59 +289,153 @@ export function crearServicio(core) {
+     });
+   }
+ 
+-  // Cobrar: todo el pedido de una vez, cuando todos los ítems ya se entregaron (o se anuló).
+-  // `clienteId` (opcional) asocia al cliente en la misma transición (cobro de alguien que no se había cargado).
+-  // Tras pagar, los puntos se acumulan por el evento del motor; aquí se vuelve a pedir (idempotente) para
+-  // informar cuántos se dieron. Si la fidelización falla, el pago NO se revierte: queda en `puntos.error`.
+-  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId }) {
+-    exigir(actor, "documento:editar");
++  // ---------- cobrar (todo el pedido, o ítem por ítem) ----------
++  //
++  // Cada ítem se paga con su propia transición `entregado → pagado` (cuenta dividida, 5.27). El cliente que gana
++  // los puntos es el del ítem; si no tiene, el del pedido (se copia al ítem al pagar, queda guardado). El pedido se
++  // cierra (`pagado`) cuando ya no queda nada por cobrar ni por entregar: lo hace quien paga el último ítem, o
++  // el sistema si lo último que pasó fue anular un ítem pendiente.
++
++  const clienteIdValido = (clienteId) => {
+     if (clienteId !== undefined && clienteId !== null && typeof clienteId !== "string")
+       throw new ErrorPedido("DATOS_INVALIDOS", "clienteId debe ser un id o null");
++  };
++
++  // Paga los ítems indicados (ya validados como `entregado` de este pedido). Devuelve los puntos por cliente.
++  async function pagarItems({ empresaId, actor, pedido, codigos }) {
++    const pagados = [];
++    for (const codigo of codigos) {
++      const it = await cargarItem(codigo);
++      const cliente = it.snapshot?.cliente ?? pedido.snapshot?.cliente ?? null;
++      await documentos.transicionar({
++        code: codigo,
++        a: "pagado",
++        usuarioId: actor.usuarioId,
++        permisos: actor.permisos,
++        snapshot: { ...(it.snapshot ?? {}), cliente },
++      });
++      pagados.push(codigo);
++    }
++    return await puntosDeItems({ empresaId, codigos: pagados });
++  }
++
++  // Cierra el pedido si no queda nada por entregar ni por cobrar y algo se cobró. `sistema`: lo cierra el servicio
++  // (quien anuló un ítem puede no tener la estación de administración). Devuelve el pedido actual.
++  async function cerrarSiCompleto({ actor, code, sistema = false, esperaVersion }) {
++    const pedido = await cargarPedido(code);
++    if (pedido.estado !== "abierto") return pedido;
++    const completa = await completoPedido(pedido);
++    const vivos = completa.items.filter((i) => i.estado !== "anulado");
++    if (!vivos.length || vivos.some((i) => i.estado !== "pagado")) return pedido;
++    return await documentos.transicionar({
++      code,
++      a: "pagado",
++      usuarioId: actor.usuarioId,
++      permisos: actor.permisos,
++      sistema,
++      doc: { ...pedido.payload.doc, total: totalDe(completa.items) },
++      esperaVersion,
++    });
++  }
++
++  // Cobrar TODO lo que falta de un pedido, cuando ya está entregado (o anulado). Cierra el pedido.
++  // `clienteId` (opcional) asocia al cliente del pedido antes de cobrar (para los ítems que no tienen el suyo).
++  // Si la fidelización falla, el pago NO se revierte: queda en `puntos.error`.
++  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId }) {
++    exigir(actor, "documento:editar");
++    clienteIdValido(clienteId);
+     return await conEmpresa(empresaId, async () => {
+-      const pedido = await cargarPedido(code);
++      let pedido = await cargarPedido(code);
++      if (esperaVersion !== undefined && esperaVersion !== pedido.version)
++        throw new ErrorDocumento("CONFLICTO_VERSION", `El documento ${code} cambió mientras se trabajaba en él; vuelve a cargarlo`, { esperada: esperaVersion, real: pedido.version });
++      if (pedido.estado !== "abierto")
++        throw new ErrorDocumento("TRANSICION_INVALIDA", `No se puede pasar de '${pedido.estado}' a 'pagado' (pedido)`);
+       const completa = await completoPedido(pedido);
+       const sinEntregar = completa.items.filter((i) => i.estado === "en_cocina" || i.estado === "lista");
+       if (sinEntregar.length)
+         throw new ErrorPedido("ESTADO_INVALIDO", `hay ${sinEntregar.length} item(s) sin entregar`, {
+           pendientes: sinEntregar.map((i) => i.code),
+         });
+-      if (!completa.items.some((i) => i.estado === "entregado"))
++      const porPagar = completa.items.filter((i) => i.estado === "entregado").map((i) => i.code);
++      if (!porPagar.length && !completa.items.some((i) => i.estado === "pagado"))
+         throw new ErrorPedido("ESTADO_INVALIDO", "el pedido no tiene nada entregado que cobrar");
+-      let snapshot;
+       if (clienteId !== undefined) {
+         const cliente = clienteId
+           ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
+           : null;
+-        snapshot = { ...(pedido.snapshot ?? {}), cliente };
++        pedido = await documentos.nuevaVersion({
++          code,
++          snapshot: { ...(pedido.snapshot ?? {}), cliente },
++          usuarioId: actor.usuarioId,
++          esperaVersion: pedido.version,
++        });
+       }
+-      const d = await documentos.transicionar({
+-        code,
+-        a: "pagado",
+-        usuarioId: actor.usuarioId,
+-        permisos: actor.permisos,
+-        doc: { ...pedido.payload.doc, total: totalDe(completa.items) },
+-        ...(snapshot ? { snapshot } : {}),
+-        esperaVersion,
+-      });
+-      const respuesta = await completoPedido(d);
+-      const puntos = await puntosDelPago({ empresaId, code, d });
++      const puntos = await pagarItems({ empresaId, actor, pedido, codigos: porPagar });
++      await cerrarSiCompleto({ actor, code });
++      const respuesta = await completoPedido(await cargarPedido(code));
+       return puntos ? { ...respuesta, puntos } : respuesta;
+     });
+   }
+ 
+-  // Resultado de los puntos de un pedido recién pagado. null si no hay fidelización o el pedido no tiene cliente.
+-  async function puntosDelPago({ empresaId, code, d }) {
+-    if (!core.fidelizacion || !d.snapshot?.cliente?.clienteId) return null;
+-    try {
+-      const r = await core.fidelizacion.acumularPorDocumento({ empresaId, code });
+-      return {
+-        acumulados: r.acumulados ?? 0,
+-        saldo: r.saldo ?? null,
+-        ...(r.motivo ? { motivo: r.motivo } : {}),
+-      };
+-    } catch {
+-      return { acumulados: 0, error: true };
++  // Cobrar solo algunos ítems (la parte de un comensal). Cada ítem debe estar entregado y ser de este pedido.
++  // Si con esto no queda nada por cobrar, el pedido se cierra solo.
++  async function cobrarItems({ empresaId, actor, code, items: codigos }) {
++    exigir(actor, "documento:editar");
++    if (!Array.isArray(codigos) || !codigos.length || codigos.length > 100 || new Set(codigos).size !== codigos.length)
++      throw new ErrorPedido("DATOS_INVALIDOS", "items: una lista de 1 a 100 códigos de ítem, sin repetir");
++    if (codigos.some((c) => typeof c !== "string" || !/^DOC_ITEM-\d{7,}$/.test(c)))
++      throw new ErrorPedido("DATOS_INVALIDOS", "items: códigos de ítem inválidos");
++    return await conEmpresa(empresaId, async () => {
++      const pedido = await cargarPedido(code);
++      if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido ya no está abierto");
++      const completa = await completoPedido(pedido);
++      for (const c of codigos) {
++        const it = completa.items.find((i) => i.code === c);
++        if (!it) throw new ErrorPedido("DATOS_INVALIDOS", `el ítem ${c} no es de este pedido`);
++        if (it.estado !== "entregado") throw new ErrorPedido("ESTADO_INVALIDO", `el ítem ${c} no está entregado (${it.estado})`, { items: [c] });
++      }
++      const puntos = await pagarItems({ empresaId, actor, pedido, codigos });
++      await cerrarSiCompleto({ actor, code });
++      const respuesta = await completoPedido(await cargarPedido(code));
++      return puntos ? { ...respuesta, puntos } : respuesta;
++    });
++  }
++
++  // Los puntos de los ítems recién pagados, por cliente. null si ninguno tiene cliente o no hay fidelización.
++  // Un fallo de la fidelización no deshace el pago: se avisa en `error`.
++  async function puntosDeItems({ empresaId, codigos }) {
++    if (!core.fidelizacion) return null;
++    const porCliente = new Map();
++    let hayError = false;
++    for (const codigo of codigos) {
++      const it = await documentos.obtener({ code: codigo });
++      const cl = it?.snapshot?.cliente;
++      if (!cl?.clienteId) continue;
++      const id = String(cl.clienteId);
++      const fila = porCliente.get(id) ?? { id, nombre: cl.nombre ?? "", acumulados: 0, saldo: null, motivo: undefined };
++      try {
++        const r = await core.fidelizacion.acumularPorDocumento({ empresaId, code: codigo });
++        fila.acumulados += r.acumulados ?? 0;
++        if (r.saldo != null) fila.saldo = r.saldo;
++        if (!r.acumulados && r.motivo && !fila.motivo) fila.motivo = r.motivo;
++      } catch {
++        hayError = true;
++        fila.error = true;
++      }
++      porCliente.set(id, fila);
+     }
++    if (!porCliente.size) return null;
++    const clientes = [...porCliente.values()].map(({ motivo, error, ...f }) => ({ ...f, ...(error ? { error: true } : {}), ...(motivo && !f.acumulados ? { motivo } : {}) }));
++    const total = clientes.reduce((n, c) => n + c.acumulados, 0);
++    if (hayError && !total) return { acumulados: 0, error: true, clientes };
++    const uno = clientes.length === 1 ? clientes[0] : null;
++    return {
++      acumulados: total,
++      saldo: uno ? uno.saldo : null,
++      ...(uno?.motivo ? { motivo: uno.motivo } : {}),
++      ...(hayError ? { error: true } : {}),
++      clientes,
++    };
+   }
+ 
+   // Anular el pedido anula también lo que siga en pie (con el mismo motivo). Si algún ítem no pudo
+@@ -339,6 +444,12 @@ export function crearServicio(core) {
+     exigir(actor, "documento:editar");
+     return await conEmpresa(empresaId, async () => {
+       const pedido = await cargarPedido(code);
++      // Lo ya cobrado no se deshace: se anulan los ítems que faltan y el pedido se cierra solo.
++      for (const c of pedido.payload.doc.codigosItems ?? []) {
++        const it = await documentos.obtener({ code: c });
++        if (it?.estado === "pagado")
++          throw new ErrorPedido("ESTADO_INVALIDO", "ya se cobraron ítems de este pedido: anula los que faltan en lugar de todo el pedido", { items: [c] });
++      }
+       const d = await documentos.transicionar({
+         code,
+         a: "anulado",
+@@ -406,6 +517,32 @@ export function crearServicio(core) {
+         motivo,
+         esperaVersion,
+       });
++      // Si lo último que faltaba por entregar o cobrar se anuló, y ya se cobró algo, el pedido se cierra solo.
++      if (a === "anulado") await cerrarSiCompleto({ actor, code: item.payload.doc.pedidoCode, sistema: true });
++      return completoItem(d);
++    });
++  }
++
++  // A quién se le cobra un ítem (cuenta dividida): el cliente del ítem, o null para volver al del pedido.
++  // Solo con el pedido abierto y el ítem sin pagar ni anular. Guarda la copia (nombre, teléfono) en el ítem.
++  async function asociarClienteItem({ empresaId, actor, code, clienteId, esperaVersion }) {
++    exigir(actor, "documento:editar");
++    clienteIdValido(clienteId ?? null);
++    return await conEmpresa(empresaId, async () => {
++      const item = await cargarItem(code);
++      const pedido = await cargarPedido(item.payload.doc.pedidoCode);
++      if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
++      if (item.estado === "pagado" || item.estado === "anulado")
++        throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no cambia de cliente`);
++      const cliente = clienteId
++        ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
++        : null;
++      const d = await documentos.nuevaVersion({
++        code,
++        snapshot: { ...(item.snapshot ?? {}), cliente },
++        usuarioId: actor.usuarioId,
++        esperaVersion: esperaVersion ?? item.version,
++      });
+       return completoItem(d);
+     });
+   }
+@@ -421,7 +558,8 @@ export function crearServicio(core) {
+       const item = await cargarItem(code);
+       const pedido = await cargarPedido(item.payload.doc.pedidoCode);
+       if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
+-      if (item.estado === "anulado") throw new ErrorPedido("ESTADO_INVALIDO", "un ítem anulado no cambia de precio");
++      if (item.estado === "anulado" || item.estado === "pagado")
++        throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no cambia de precio`);
+       const s = item.snapshot?.item ?? {};
+       const nuevo = { ...s, precio };
+       if (s.origen !== "libre") {
+@@ -450,6 +588,7 @@ export function crearServicio(core) {
+       editar: editarPedido,
+       asociarCliente,
+       cobrar,
++      cobrarItems,
+       anular: anularPedido,
+     },
+     items: {
+@@ -459,6 +598,7 @@ export function crearServicio(core) {
+       entregar: (p) => mover({ ...p, a: "entregado" }),
+       anular: (p) => mover({ ...p, a: "anulado" }),
+       cambiarPrecio,
++      asociarCliente: asociarClienteItem,
+     },
+   };
+ }
+diff --git a/src/tipos.js b/src/tipos.js
+index 5a55602..539ca66 100644
+--- a/src/tipos.js
++++ b/src/tipos.js
+@@ -4,7 +4,8 @@
+ // Dos cosas distintas (arquitectura 5.18):
+ //
+ //   ITEM (tipo `doc_item`): un solo ítem que se mueve por las estaciones. Es lo que ve cocina.
+-//     en_cocina → lista → entregado         anulado: salida final antes o después de entregar, con motivo
++//     en_cocina → lista → entregado → pagado    anulado: salida final antes de pagar (también tras entregar), con motivo
++//     `pagado` es el cobro de ESE ítem (cuenta dividida, 5.27): un ítem pagado ya no cambia.
+ //
+ //   PEDIDO (tipo `pedido`): todo lo que pidió una mesa o una persona, desde el primer ítem hasta que se
+ //   paga todo el pedido. Es lo que se cobra.
+@@ -30,15 +31,17 @@ export const TIPO_ITEM = Object.freeze({
+   transiciones: {
+     en_cocina: ["lista", "anulado"],
+     lista: ["entregado", "anulado"],
+-    entregado: ["anulado"],
++    entregado: ["pagado", "anulado"],
+   },
+   permisos: {
+     lista: "estacion:cocina",
++    pagado: "estacion:administracion",
+     anulado: "estacion:creacion",
+   },
+   motivos: { anulado: MOTIVOS_ANULACION },
+   // Lo que cocina prepara no se edita (cantidad, notas, qué ítem): si se equivocó, se anula y se pide otro.
+-  // Lo único que cambia sobre un ítem vivo es su precio (administración): el servicio no admite otra edición.
++  // Lo único que cambia sobre un ítem vivo es su precio (administración) y el cliente al que se le cobra
++  // (`snapshot.cliente`): el servicio no admite otra edición. Un ítem pagado no se edita.
+   editables: ["en_cocina", "lista", "entregado"],
+ });
+ 
+diff --git a/test/front-pedidos.test.js b/test/front-pedidos.test.js
+index 2463eac..6e12645 100644
+--- a/test/front-pedidos.test.js
++++ b/test/front-pedidos.test.js
+@@ -9,7 +9,7 @@ import { cuerpoPrecio,
+   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
+   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
+   accionesItem, accionesPedido, resumenItems, itemsDeCocina, haceCuanto, puedeMarcarListos,
+-  etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos,
++  etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos, gruposPorCliente,
+ } from "../client/src/pedidos.js";
+ 
+ // api.js calcula la ruta base con document.baseURI al importarse: se simula antes de cargarlo.
+@@ -301,6 +301,31 @@ test("textoPuntos: qué le dice el cobro al cajero", () => {
+   assert.match(textoPuntos({ acumulados: 18, saldo: 118 }), /ganó 18 puntos \(saldo: 118\)/);
+   assert.match(textoPuntos({ acumulados: 1 }), /ganó 1 punto\./);
+   assert.match(textoPuntos({ acumulados: 0, motivo: "sin_consentimiento" }), /no aceptó/);
+-  assert.match(textoPuntos({ acumulados: 0, error: true }), /se cobró, pero no se pudieron registrar/);
++  assert.match(textoPuntos({ acumulados: 0, error: true }), /Se cobró, pero no se pudieron registrar/);
+   assert.equal(textoPuntos({ acumulados: 0, motivo: "sin_cliente" }), null);
+ });
++
++test("cuenta dividida: acciones del ítem, resumen y grupos por cliente", () => {
++  assert.equal(accionesItem("entregado", CAJERO).cobrar, true);
++  assert.equal(accionesItem("entregado", MESERO).cobrar, false, "cobrar pide administración");
++  assert.equal(accionesItem("en_cocina", CAJERO).cobrar, false);
++  assert.equal(accionesItem("pagado", CAJERO).cliente, false);
++  assert.equal(accionesItem("pagado", CAJERO).precio, false);
++  assert.equal(accionesItem("lista", MESERO).cliente, true);
++  const A = { id: "a", nombre: "Ana" }, B = { id: "b", nombre: "Beto" };
++  const it = (code, estado, subtotal, cliente = null) => ({ code, estado, subtotal, cliente });
++  const pedido = { estado: "abierto", cliente: B, items: [it("1", "pagado", 13, A), it("2", "entregado", 5, A), it("3", "entregado", 12), it("4", "en_cocina", 4), it("5", "anulado", 9)] };
++  const r = resumenItems(pedido.items);
++  assert.deepEqual([r.pagados, r.total, r.cobrado, r.porCobrar], [1, 34, 13, 21]);
++  const g = gruposPorCliente(pedido);
++  assert.deepEqual(g.map((x) => [x.cliente.nombre, x.entregados, x.subtotal, x.enCurso]), [["Ana", ["2"], 5, 0], ["Beto", ["3"], 12, 1]]);
++  const a = accionesPedido(pedido, CAJERO);
++  assert.equal(a.anular, false, "con ítems cobrados no se anula el pedido entero");
++  assert.equal(a.dividir, true);
++  assert.equal(accionesPedido({ ...pedido, items: [it("1", "pagado", 5)] }, CAJERO).puedeCobrarAhora, true, "solo queda cerrar");
++});
++
++test("textoPuntos con varios clientes dice uno por uno", () => {
++  const t = textoPuntos({ acumulados: 13, saldo: null, clientes: [{ nombre: "Ana", acumulados: 13 }, { nombre: "Beto", acumulados: 0, motivo: "sin_consentimiento" }] });
++  assert.match(t, /Ana ganó 13 puntos · Beto no aceptó el programa/);
++});
+diff --git a/test/servicio-logica.test.js b/test/servicio-logica.test.js
+index a09cd56..c28a93c 100644
+--- a/test/servicio-logica.test.js
++++ b/test/servicio-logica.test.js
+@@ -76,6 +76,19 @@ function nucleoFalso() {
+   };
+ }
+ 
++// Fidelización falsa por ítem: `puntos(item)` recibe { subtotal, cliente } y devuelve lo que daría el núcleo
++function conPuntosPorItem(core, puntos) {
++  const llamadas = [];
++  core.fidelizacion = {
++    acumularPorDocumento: async ({ code }) => {
++      llamadas.push(code);
++      const d = core.docs.get(code);
++      return puntos({ subtotal: d.payload.doc.subtotal, cliente: d.snapshot?.cliente?.clienteId });
++    },
++  };
++  return llamadas;
++}
++
+ const ADMIN = { usuarioId: "u1", permisos: ["*"] };
+ const MESERO = { usuarioId: "u2", permisos: ["documento:crear", "documento:leer", "documento:editar", "estacion:creacion"] };
+ const COCINA = { usuarioId: "u5", permisos: ["documento:leer", "documento:editar", "estacion:cocina"] };
+@@ -323,9 +336,9 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
+       await assert.rejects(precio(CAJERO, "DOC_ITEM-0000001", 3, { esperaVersion: 9 }), cod("CONFLICTO_VERSION"));
+     });
+ 
+-    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existe el precio", () => {
++    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existen el precio y el cliente", () => {
+       nuevo();
+-      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
++      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "asociarCliente", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
+     });
+   });
+ 
+@@ -342,8 +355,9 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
+       core.fidelizacion = {
+         acumularPorDocumento: async (a) => {
+           llamadas.push(a);
+-          if (resultado instanceof Error) throw resultado;
+-          return resultado;
++          const r = typeof resultado === "function" ? resultado(a) : resultado;
++          if (r instanceof Error) throw r;
++          return r;
+         },
+       };
+       svc = crearServicio(core);
+@@ -391,13 +405,14 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
+ 
+     it("al cobrar un pedido con cliente informa los puntos acumulados", async () => {
+       nuevo();
+-      const llamadas = conPuntos({ acumulados: 18, clienteId: ID, saldo: 118 });
++      // Los puntos salen por ítem (13 y 5 de subtotal → 13 y 5 puntos); el pedido los suma
++      const llamadas = conPuntos(({ code }) => (code.endsWith("1") ? { acumulados: 13, saldo: 113 } : { acumulados: 5, saldo: 118 }));
+       const c = await abrir();
+       await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
+       await entregarTodo(c);
+       const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
+-      assert.deepEqual(p.puntos, { acumulados: 18, saldo: 118 });
+-      assert.deepEqual(llamadas, [{ empresaId: E, code: c.code }]);
++      assert.deepEqual(p.puntos, { acumulados: 18, saldo: 118, clientes: [{ id: ID, nombre: "Ana", acumulados: 18, saldo: 118 }] });
++      assert.deepEqual(llamadas.map((l) => l.code), ["DOC_ITEM-0000001", "DOC_ITEM-0000002"]);
+     });
+ 
+     it("sin consentimiento informa el motivo; sin cliente ni siquiera consulta", async () => {
+@@ -406,12 +421,17 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
+       const a = await abrir();
+       await svc.pedidos.asociarCliente(m(MESERO, a.code, { clienteId: ID }));
+       await entregarTodo(a);
+-      assert.deepEqual((await svc.pedidos.cobrar(m(CAJERO, a.code))).puntos, { acumulados: 0, saldo: null, motivo: "sin_consentimiento" });
++      assert.deepEqual((await svc.pedidos.cobrar(m(CAJERO, a.code))).puntos, {
++        acumulados: 0,
++        saldo: null,
++        motivo: "sin_consentimiento",
++        clientes: [{ id: ID, nombre: "Ana", acumulados: 0, saldo: null, motivo: "sin_consentimiento" }],
++      });
+       const b = await abrir();
+       await entregarTodo(b);
+       const p = await svc.pedidos.cobrar(m(CAJERO, b.code));
+       assert.equal(p.puntos, undefined);
+-      assert.equal(llamadas.length, 1);
++      assert.equal(llamadas.length, 2, "solo se consultó por los dos ítems del pedido con cliente");
+     });
+ 
+     it("si la fidelización falla, el pago se mantiene y se avisa en puntos.error", async () => {
+@@ -422,7 +442,8 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
+       await entregarTodo(c);
+       const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
+       assert.equal(p.estado, "pagado");
+-      assert.deepEqual(p.puntos, { acumulados: 0, error: true });
++      assert.equal(p.puntos.error, true);
++      assert.equal(p.puntos.acumulados, 0);
+     });
+ 
+     it("sin fidelización en el núcleo, cobrar sigue igual y no trae puntos", async () => {
+@@ -434,6 +455,175 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
+     });
+   });
+ 
++  describe("cuenta dividida: cliente por ítem y cobro por ítem", () => {
++    const A = "64b7f0f0f0f0f0f0f0f0f0a1";
++    const B = "64b7f0f0f0f0f0f0f0f0f0b2";
++    // Tres ítems entregados: Café x2 (13), Torta (5) y Sándwich (12)
++    const mesa = async () => {
++      const c = await abrir([{ codigo: "CAFE-1", cantidad: 2 }, { libre: { nombre: "Torta", precio: 5 } }, { codigo: "SAND-1" }]);
++      for (const i of c.items) {
++        await svc.items.marcarLista(m(COCINA, i.code));
++        await svc.items.entregar(m(MESERO, i.code));
++      }
++      return c;
++    };
++    const clienteDe = { [A]: "Ana", [B]: "Beto" };
++    const conClientes = () => {
++      core.clientes.instantanea = async ({ clienteId }) => ({ clienteId, nombre: clienteDe[clienteId] ?? "Otro", telefono: null });
++    };
++    const I1 = "DOC_ITEM-0000001", I2 = "DOC_ITEM-0000002", I3 = "DOC_ITEM-0000003";
++
++    it("asigna y quita el cliente de un ítem, y el resumen lo muestra", async () => {
++      nuevo();
++      conClientes();
++      await mesa();
++      const i = await svc.items.asociarCliente(m(MESERO, I1, { clienteId: A }));
++      assert.deepEqual(i.cliente, { id: A, nombre: "Ana" });
++      assert.equal(i.version, 2);
++      const c = await svc.pedidos.obtener(m(MESERO, "PD-0000001"));
++      assert.deepEqual(c.items.map((x) => x.cliente?.nombre ?? null), ["Ana", null, null]);
++      assert.equal((await svc.items.asociarCliente(m(MESERO, I1, { clienteId: null }))).cliente, null);
++    });
++
++    it("pide permiso, valida el id y la versión, y no cambia ítems pagados, anulados ni de pedidos cerrados", async () => {
++      nuevo();
++      conClientes();
++      await mesa();
++      await assert.rejects(svc.items.asociarCliente(m(SOLO_LEER, I1, { clienteId: A })), cod("PERMISO_INSUFICIENTE"));
++      await assert.rejects(svc.items.asociarCliente(m(MESERO, I1, { clienteId: 7 })), cod("DATOS_INVALIDOS"));
++      await assert.rejects(svc.items.asociarCliente(m(MESERO, I1, { clienteId: A, esperaVersion: 99 })), cod("CONFLICTO_VERSION"));
++      await svc.pedidos.cobrarItems(m(CAJERO, "PD-0000001", { items: [I1] }));
++      await assert.rejects(svc.items.asociarCliente(m(MESERO, I1, { clienteId: A })), cod("ESTADO_INVALIDO"));
++      await svc.items.anular(m(CAJERO, I2, { motivo }));
++      await assert.rejects(svc.items.asociarCliente(m(MESERO, I2, { clienteId: A })), cod("ESTADO_INVALIDO"));
++      await svc.pedidos.cobrar(m(CAJERO, "PD-0000001"));
++      await assert.rejects(svc.items.asociarCliente(m(MESERO, I3, { clienteId: A })), cod("ESTADO_INVALIDO"));
++    });
++
++    it("cobra solo los ítems elegidos: el pedido sigue abierto con lo cobrado y lo que falta", async () => {
++      nuevo();
++      const c = await mesa();
++      const p = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      assert.equal(p.estado, "abierto");
++      assert.deepEqual(p.items.map((i) => i.estado), ["pagado", "entregado", "entregado"]);
++      assert.deepEqual([p.total, p.cobrado, p.porCobrar], [30, 13, 17]);
++      assert.equal(p.puntos, undefined, "sin cliente no hay puntos");
++    });
++
++    it("al cobrar el último ítem el pedido se cierra solo y guarda el total de todos", async () => {
++      nuevo();
++      const c = await mesa();
++      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      const p = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2, I3] }));
++      assert.equal(p.estado, "pagado");
++      assert.equal(p.total, 30);
++      assert.deepEqual(p.historial.map((h) => h.a), ["abierto", "pagado"]);
++    });
++
++    it("cobrar todo lo que falta paga solo los ítems pendientes de cobro y cierra el pedido", async () => {
++      nuevo();
++      const c = await mesa();
++      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I3] }));
++      const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
++      assert.equal(p.estado, "pagado");
++      assert.equal(p.total, 30);
++      assert.deepEqual(p.items.map((i) => i.estado), ["pagado", "pagado", "pagado"]);
++    });
++
++    it("los puntos de cada ítem van a su cliente; lo que no tiene cliente va al del pedido", async () => {
++      nuevo();
++      conClientes();
++      const llamadas = conPuntosPorItem(core, (c) => ({ acumulados: Math.floor(c.subtotal), saldo: 100, clienteId: c.cliente }));
++      svc = crearServicio(core);
++      const c = await mesa();
++      await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: B }));
++      await svc.items.asociarCliente(m(MESERO, I1, { clienteId: A }));
++      const p1 = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      assert.deepEqual(p1.puntos.clientes.map((x) => [x.nombre, x.acumulados]), [["Ana", 13]]);
++      const p2 = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2] }));
++      assert.deepEqual(p2.puntos.clientes.map((x) => [x.nombre, x.acumulados]), [["Beto", 5]], "el ítem sin cliente usa al del pedido");
++      const copia = core.docs.get(I2).snapshot.cliente;
++      assert.equal(copia.clienteId, B, "la copia queda guardada en el ítem");
++      assert.deepEqual(llamadas, [I1, I2]);
++    });
++
++    it("cobrar varios ítems de clientes distintos informa los puntos por cliente", async () => {
++      nuevo();
++      conClientes();
++      conPuntosPorItem(core, (c) => ({ acumulados: Math.floor(c.subtotal), saldo: 100, clienteId: c.cliente }));
++      svc = crearServicio(core);
++      const c = await mesa();
++      await svc.items.asociarCliente(m(MESERO, I1, { clienteId: A }));
++      await svc.items.asociarCliente(m(MESERO, I3, { clienteId: B }));
++      const p = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1, I3] }));
++      assert.deepEqual(p.puntos.clientes.map((x) => [x.nombre, x.acumulados]), [["Ana", 13], ["Beto", 12]]);
++      assert.equal(p.puntos.acumulados, 25);
++      assert.equal(p.puntos.saldo, null, "con varios clientes no hay un solo saldo");
++    });
++
++    it("no cobra ítems sin entregar, repetidos, ajenos, ya pagados ni con otro formato; ni un pedido cerrado", async () => {
++      nuevo();
++      const c = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
++      await svc.items.marcarLista(m(COCINA, I1));
++      await svc.items.entregar(m(MESERO, I1));
++      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2] })), cod("ESTADO_INVALIDO")); // en cocina
++      for (const malo of [undefined, [], "x", [I1, I1], [5], ["PD-0000001"]])
++        await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: malo })), cod("DATOS_INVALIDOS"));
++      const otro = await abrir([{ codigo: "CAFE-1" }]);
++      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [otro.items[0].code] })), cod("DATOS_INVALIDOS"));
++      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] })), cod("ESTADO_INVALIDO"));
++      await svc.items.anular(m(MESERO, I2, { motivo })); // lo último pendiente se anula: cierra solo
++      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] })), cod("ESTADO_INVALIDO"));
++    });
++
++    it("cobrar ítems pide la estación de administración", async () => {
++      nuevo();
++      const c = await mesa();
++      await assert.rejects(svc.pedidos.cobrarItems(m(MESERO, c.code, { items: [I1] })), cod("PERMISO_INSUFICIENTE"));
++      assert.equal(core.docs.get(I1).estado, "entregado");
++    });
++
++    it("un ítem pagado ya no se anula, no cambia de precio y el pedido no se anula entero", async () => {
++      nuevo();
++      const c = await mesa();
++      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      await assert.rejects(svc.items.anular(m(CAJERO, I1, { motivo })), cod("TRANSICION_INVALIDA"));
++      await assert.rejects(svc.items.cambiarPrecio(m(CAJERO, I1, { precio: 1 })), cod("ESTADO_INVALIDO"));
++      await assert.rejects(svc.pedidos.anular(m(CAJERO, c.code, { motivo })), cod("ESTADO_INVALIDO"));
++      assert.equal(core.docs.get(c.code).estado, "abierto");
++    });
++
++    it("anular lo último que faltaba cierra el pedido solo, aunque quien anula no cobre", async () => {
++      nuevo();
++      const c = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
++      await svc.items.marcarLista(m(COCINA, I1));
++      await svc.items.entregar(m(MESERO, I1));
++      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      assert.equal(core.docs.get(c.code).estado, "abierto", "falta el sándwich, que sigue en cocina");
++      await svc.items.anular(m(MESERO, I2, { motivo })); // el mesero no tiene administración
++      const p = await svc.pedidos.obtener(m(MESERO, c.code));
++      assert.equal(p.estado, "pagado");
++      assert.equal(p.total, 6.5);
++    });
++
++    it("un pedido con todo anulado y nada cobrado no se cierra solo", async () => {
++      nuevo();
++      const c = await abrir([{ codigo: "CAFE-1" }]);
++      await svc.items.anular(m(MESERO, I1, { motivo }));
++      assert.equal((await svc.pedidos.obtener(m(MESERO, c.code))).estado, "abierto");
++    });
++
++    it("el listado de pedidos abiertos trae los ítems pagados", async () => {
++      nuevo();
++      const c = await mesa();
++      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
++      const [p] = await svc.pedidos.listar({ empresaId: E, actor: MESERO, estado: ["abierto"] });
++      assert.deepEqual(p.items.map((i) => i.estado), ["pagado", "entregado", "entregado"]);
++      assert.deepEqual([p.cobrado, p.porCobrar], [13, 17]);
++    });
++  });
++
+   describe("cobrar y anular el pedido", () => {
+     const entregarTodo = async (c) => {
+       for (const i of c.items) {
+diff --git a/test/tipos.test.js b/test/tipos.test.js
+index 4b6bd18..d3f965e 100644
+--- a/test/tipos.test.js
++++ b/test/tipos.test.js
+@@ -14,8 +14,8 @@ describe("tipos de documento del restaurante", () => {
+     const p = tipo("doc_item");
+     assert.equal(p.prefijo, "DOC_ITEM");
+     assert.equal(p.estadoInicial, "en_cocina");
+-    assert.deepEqual(p.estados.sort(), ["anulado", "en_cocina", "entregado", "lista"]);
+-    assert.deepEqual(p.finales, ["anulado"]);
++    assert.deepEqual(p.estados.sort(), ["anulado", "en_cocina", "entregado", "lista", "pagado"]);
++    assert.deepEqual(p.finales.sort(), ["anulado", "pagado"]); // pagado: cobro del ítem (cuenta dividida)
+     assert.deepEqual(p.editables.sort(), ["en_cocina", "entregado", "lista"]); // solo para corregir el precio (el servicio no admite otra edición)
+     const c = tipo("pedido");
+     assert.equal(c.prefijo, "PD");
+@@ -35,6 +35,7 @@ describe("tipos de documento del restaurante", () => {
+   it("estaciones: cocina marca lista, administración paga y anula el pedido, y entregar no pide estación", () => {
+     assert.equal(TIPO_ITEM.permisos.lista, "estacion:cocina");
+     assert.equal(TIPO_ITEM.permisos.entregado, undefined);
++    assert.equal(TIPO_ITEM.permisos.pagado, "estacion:administracion");
+     assert.equal(TIPO_PEDIDO.permisos.pagado, "estacion:administracion");
+     assert.equal(TIPO_PEDIDO.permisos.anulado, "estacion:administracion");
+   });

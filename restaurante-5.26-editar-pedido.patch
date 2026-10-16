@@ -1,0 +1,82 @@
+diff --git a/client/src/DetallePedido.jsx b/client/src/DetallePedido.jsx
+index 75ac7ff..eadb443 100644
+--- a/client/src/DetallePedido.jsx
++++ b/client/src/DetallePedido.jsx
+@@ -8,6 +8,9 @@ import {
+   MOTIVOS_ANULACION,
+   accionesPedido,
+   accionesItem,
++  cuerpoDatos,
++  formularioDesdePedido,
++  validarFormulario,
+   cuerpoPrecio,
+   destinoDe,
+   formatoDinero,
+@@ -35,6 +38,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+   const [editandoPrecio, setEditandoPrecio] = useState(null); // { code, texto }
+   const [motivo, setMotivo] = useState("");
+   const [detalleMotivo, setDetalleMotivo] = useState("");
++  const [editando, setEditando] = useState(null); // formulario de los datos del pedido (mesa, a nombre de, entrega, notas)
+   const [avisoPuntos, setAvisoPuntos] = useState(""); // lo que ganó el cliente al cobrar (sobrevive a la recarga)
+   const [claveSinAnotar, setClaveSinAnotar] = useState(false);
+ 
+@@ -60,6 +64,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+     try {
+       await fn();
+       setAnulando(null);
++      setEditando(null);
+       setEditandoPrecio(null);
+       setMotivo("");
+       setDetalleMotivo("");
+@@ -200,6 +205,11 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+         {acc.agregar && (
+           <button type="button" className="rs-btn" disabled={trabajando} onClick={() => alPedirMas(c)}>Pedir más</button>
+         )}
++        {acc.editarDatos && !editando && (
++          <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setEditando(formularioDesdePedido(c))}>
++            {doc.canal === "salon" ? "Cambiar mesa y notas" : doc.canal === "llevar" ? "Cambiar nombre y notas" : "Editar datos de entrega"}
++          </button>
++        )}
+         {acc.cobrar && (
+           <button
+             type="button"
+@@ -222,6 +232,39 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas })
+       </div>
+       {acc.cobrar && acc.motivoNoCobrar && <small className="rs-vacio">{acc.motivoNoCobrar}</small>}
+ 
++      {editando && acc.editarDatos && (
++        <form
++          className="rs-form"
++          onSubmit={(e) => {
++            e.preventDefault();
++            // validarFormulario también pide ítems: aquí no se editan, se le pasa uno de relleno
++            const problema = validarFormulario({ ...editando, items: [1] });
++            if (problema) return setError(problema);
++            ejecutar(() => api.pedidos.editar(c.code, cuerpoDatos(editando, c.version)));
++          }}
++        >
++          <h2 className="rs-subtitulo">Editar datos del pedido</h2>
++          {editando.canal === "salon" && (
++            <label className="campo"><span>Mesa</span><input autoFocus value={editando.mesa} maxLength={20} onChange={(e) => setEditando({ ...editando, mesa: e.target.value })} /></label>
++          )}
++          {editando.canal === "llevar" && (
++            <label className="campo"><span>A nombre de</span><input autoFocus value={editando.referencia} maxLength={60} onChange={(e) => setEditando({ ...editando, referencia: e.target.value })} /></label>
++          )}
++          {editando.canal === "delivery" && (
++            <>
++              <label className="campo"><span>Dirección de entrega</span><input autoFocus value={editando.direccion} maxLength={200} onChange={(e) => setEditando({ ...editando, direccion: e.target.value })} /></label>
++              <label className="campo"><span>Teléfono de contacto</span><input value={editando.telefono} inputMode="tel" maxLength={30} onChange={(e) => setEditando({ ...editando, telefono: e.target.value })} /></label>
++              <label className="campo"><span>Referencia (opcional)</span><input value={editando.referenciaEntrega} maxLength={200} onChange={(e) => setEditando({ ...editando, referenciaEntrega: e.target.value })} /></label>
++            </>
++          )}
++          <label className="campo"><span>Notas del pedido (opcional)</span><input value={editando.notas} maxLength={500} onChange={(e) => setEditando({ ...editando, notas: e.target.value })} /></label>
++          <div className="rs-acciones">
++            <button type="submit" className="rs-btn rs-btn--primario" disabled={trabajando}>Guardar cambios</button>
++            <button type="button" className="rs-btn" onClick={() => setEditando(null)}>Cancelar</button>
++          </div>
++        </form>
++      )}
++
+       {anulando && (
+         <form
+           className="rs-form rs-anular"
