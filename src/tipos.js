@@ -4,7 +4,8 @@
 // Dos cosas distintas (arquitectura 5.18):
 //
 //   ITEM (tipo `doc_item`): un solo ítem que se mueve por las estaciones. Es lo que ve cocina.
-//     en_cocina → lista → entregado         anulado: salida final antes o después de entregar, con motivo
+//     en_cocina → lista → entregado → pagado    anulado: salida final antes de pagar (también tras entregar), con motivo
+//     `pagado` es el cobro de ESE ítem (cuenta dividida, 5.27): un ítem pagado ya no cambia.
 //
 //   PEDIDO (tipo `pedido`): todo lo que pidió una mesa o una persona, desde el primer ítem hasta que se
 //   paga todo el pedido. Es lo que se cobra.
@@ -30,15 +31,17 @@ export const TIPO_ITEM = Object.freeze({
   transiciones: {
     en_cocina: ["lista", "anulado"],
     lista: ["entregado", "anulado"],
-    entregado: ["anulado"],
+    entregado: ["pagado", "anulado"],
   },
   permisos: {
     lista: "estacion:cocina",
+    pagado: "estacion:administracion",
     anulado: "estacion:creacion",
   },
   motivos: { anulado: MOTIVOS_ANULACION },
   // Lo que cocina prepara no se edita (cantidad, notas, qué ítem): si se equivocó, se anula y se pide otro.
-  // Lo único que cambia sobre un ítem vivo es su precio (administración): el servicio no admite otra edición.
+  // Lo único que cambia sobre un ítem vivo es su precio (administración) y el cliente al que se le cobra
+  // (`snapshot.cliente`): el servicio no admite otra edición. Un ítem pagado no se edita.
   editables: ["en_cocina", "lista", "entregado"],
 });
 

@@ -9,7 +9,7 @@ import { cuerpoPrecio,
   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
   accionesItem, accionesPedido, resumenItems, itemsDeCocina, haceCuanto, puedeMarcarListos,
-  etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos,
+  etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos, gruposPorCliente,
 } from "../client/src/pedidos.js";
 
 // api.js calcula la ruta base con document.baseURI al importarse: se simula antes de cargarlo.
@@ -301,6 +301,31 @@ test("textoPuntos: qué le dice el cobro al cajero", () => {
   assert.match(textoPuntos({ acumulados: 18, saldo: 118 }), /ganó 18 puntos \(saldo: 118\)/);
   assert.match(textoPuntos({ acumulados: 1 }), /ganó 1 punto\./);
   assert.match(textoPuntos({ acumulados: 0, motivo: "sin_consentimiento" }), /no aceptó/);
-  assert.match(textoPuntos({ acumulados: 0, error: true }), /se cobró, pero no se pudieron registrar/);
+  assert.match(textoPuntos({ acumulados: 0, error: true }), /Se cobró, pero no se pudieron registrar/);
   assert.equal(textoPuntos({ acumulados: 0, motivo: "sin_cliente" }), null);
+});
+
+test("cuenta dividida: acciones del ítem, resumen y grupos por cliente", () => {
+  assert.equal(accionesItem("entregado", CAJERO).cobrar, true);
+  assert.equal(accionesItem("entregado", MESERO).cobrar, false, "cobrar pide administración");
+  assert.equal(accionesItem("en_cocina", CAJERO).cobrar, false);
+  assert.equal(accionesItem("pagado", CAJERO).cliente, false);
+  assert.equal(accionesItem("pagado", CAJERO).precio, false);
+  assert.equal(accionesItem("lista", MESERO).cliente, true);
+  const A = { id: "a", nombre: "Ana" }, B = { id: "b", nombre: "Beto" };
+  const it = (code, estado, subtotal, cliente = null) => ({ code, estado, subtotal, cliente });
+  const pedido = { estado: "abierto", cliente: B, items: [it("1", "pagado", 13, A), it("2", "entregado", 5, A), it("3", "entregado", 12), it("4", "en_cocina", 4), it("5", "anulado", 9)] };
+  const r = resumenItems(pedido.items);
+  assert.deepEqual([r.pagados, r.total, r.cobrado, r.porCobrar], [1, 34, 13, 21]);
+  const g = gruposPorCliente(pedido);
+  assert.deepEqual(g.map((x) => [x.cliente.nombre, x.entregados, x.subtotal, x.enCurso]), [["Ana", ["2"], 5, 0], ["Beto", ["3"], 12, 1]]);
+  const a = accionesPedido(pedido, CAJERO);
+  assert.equal(a.anular, false, "con ítems cobrados no se anula el pedido entero");
+  assert.equal(a.dividir, true);
+  assert.equal(accionesPedido({ ...pedido, items: [it("1", "pagado", 5)] }, CAJERO).puedeCobrarAhora, true, "solo queda cerrar");
+});
+
+test("textoPuntos con varios clientes dice uno por uno", () => {
+  const t = textoPuntos({ acumulados: 13, saldo: null, clientes: [{ nombre: "Ana", acumulados: 13 }, { nombre: "Beto", acumulados: 0, motivo: "sin_consentimiento" }] });
+  assert.match(t, /Ana ganó 13 puntos · Beto no aceptó el programa/);
 });

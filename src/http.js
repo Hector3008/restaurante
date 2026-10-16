@@ -30,6 +30,8 @@ function responder(res, e, next) {
  *   PUT  /pedidos/:code  { esperaVersion?, mesa, referencia, entrega, notas }   documento:editar
  *   PUT  /pedidos/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (solo abierto)
  *   POST /pedidos/:code/cobrar  { esperaVersion?, clienteId? }   documento:editar + estación administración (el motor)
+ *   POST /pedidos/:code/cobrar-items  { items: ["DOC_ITEM-…"] }   igual (cuenta dividida: cobra solo esos ítems entregados;
+ *        el pedido se cierra solo cuando no queda nada por cobrar)
  *   POST /pedidos/:code/anular  { motivo: { codigo, detalle? } }   igual
  *
  * Ítems (un ítem que se mueve por las estaciones; cocina trabaja con estos)
@@ -37,6 +39,7 @@ function responder(res, e, next) {
  *   GET  /items/:code                                   documento:leer
  *   POST /items/:code/lista                             documento:editar + estación cocina (el motor)
  *   POST /items/:code/entregar                          documento:editar
+ *   PUT  /items/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (a quién se le cobra el ítem)
  *   POST /items/:code/precio  { precio }                documento:editar + estación administración (solo el precio)
  *   POST /items/:code/anular  { motivo }                documento:editar (+ administración si ya salió de cocina)
  */
@@ -128,6 +131,13 @@ export function montarRutas(router, core, servicio) {
       }),
     );
   pasoPedido("cobrar", "cobrar");
+  router.post(
+    "/pedidos/:code/cobrar-items",
+    ...editar("administracion"),
+    envolver(true, async (req, res) =>
+      res.status(200).json(await pedidos.cobrarItems({ ...base(req), code: req.params.code, items: req.body?.items })),
+    ),
+  );
   pasoPedido("anular", "anular");
 
   // ---------- ítems (ítems) ----------
@@ -156,6 +166,14 @@ export function montarRutas(router, core, servicio) {
   pasoItem("lista", "marcarLista", "cocina");
   pasoItem("entregar", "entregar", "creacion");
   pasoItem("anular", "anular", "creacion");
+  router.put(
+    "/items/:code/cliente",
+    ...editar("creacion"),
+    envolver(true, async (req, res) => {
+      const { esperaVersion, clienteId } = req.body ?? {};
+      res.status(200).json(await items.asociarCliente({ ...base(req), code: req.params.code, esperaVersion, clienteId: clienteId ?? null }));
+    }),
+  );
   router.post(
     "/items/:code/precio",
     ...editar("administracion"),

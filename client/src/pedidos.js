@@ -11,7 +11,7 @@ export function permite(permisos, requerido) {
 }
 
 export const ESTADOS_PEDIDO = { abierto: "Abierto", pagado: "Pagado", anulado: "Anulado" };
-export const ESTADOS_ITEM = { en_cocina: "En cocina", lista: "Lista", entregado: "Entregado", anulado: "Anulado" };
+export const ESTADOS_ITEM = { en_cocina: "En cocina", lista: "Lista", entregado: "Entregado", pagado: "Pagado", anulado: "Anulado" };
 export const CANALES = { salon: "Salón", llevar: "Para llevar", delivery: "Delivery" };
 // Mismos que MOTIVOS_ANULACION del servicio (src/tipos.js)
 export const MOTIVOS_ANULACION = [
@@ -223,8 +223,11 @@ export function accionesItem(estado, permisos) {
     editar &&
     (estado === "en_cocina" ? permite(permisos, "estacion:creacion") : ["lista", "entregado"].includes(estado) && permite(permisos, "estacion:administracion"));
   // Corregir el precio sin anular: administración, en cualquier estado vivo. Ocultar el botón NO es seguridad.
-  const precio = editar && estado !== "anulado" && permite(permisos, "estacion:administracion");
-  return { pasos, anular: Boolean(anular), precio: Boolean(precio) };
+  const precio = editar && estado !== "anulado" && estado !== "pagado" && permite(permisos, "estacion:administracion");
+  // Cuenta dividida: a quién se le cobra el ítem (quien edita pedidos) y cobrarlo solo (administración, ya entregado).
+  const cliente = editar && ["en_cocina", "lista", "entregado"].includes(estado);
+  const cobrar = editar && estado === "entregado" && permite(permisos, "estacion:administracion");
+  return { pasos, anular: Boolean(anular), precio: Boolean(precio), cliente: Boolean(cliente), cobrar: Boolean(cobrar) };
 }
 
 /** Lo que se envía a POST /items/:code/precio: el precio es obligatorio (para quitarlo se anula y se pide otro). */
@@ -235,24 +238,64 @@ export function cuerpoPrecio(texto) {
   return { ok: true, precio: p.valor };
 }
 
-/** Cuántos ítems hay en cada estado y el total de lo que se cobra. */
+/**
+ * Cuántos ítems hay en cada estado y el total de lo que se cobra. `total` es de todo lo no anulado; `cobrado` lo ya
+ * pagado y `porCobrar` lo que falta (null si algún ítem de esa parte no tiene precio).
+ */
 export function resumenItems(items) {
-  const r = { enCocina: 0, listos: 0, entregados: 0, anulados: 0, total: 0, activos: 0, sinPrecio: false };
+  const r = { enCocina: 0, listos: 0, entregados: 0, pagados: 0, anulados: 0, total: 0, cobrado: 0, porCobrar: 0, activos: 0, sinPrecio: false };
   let centavos = 0;
+  let cobrado = 0;
+  let falta = 0;
+  let sinPrecioFalta = false;
   for (const i of items ?? []) {
     if (i.estado === "en_cocina") r.enCocina++;
     else if (i.estado === "lista") r.listos++;
     else if (i.estado === "entregado") r.entregados++;
+    else if (i.estado === "pagado") r.pagados++;
     else if (i.estado === "anulado") {
       r.anulados++;
       continue;
     }
     r.activos++;
-    if (i.subtotal === null || i.subtotal === undefined) r.sinPrecio = true;
-    else centavos += Math.round(Number(i.subtotal) * 100);
+    const sinPrecio = i.subtotal === null || i.subtotal === undefined;
+    if (sinPrecio) r.sinPrecio = true;
+    if (sinPrecio && i.estado !== "pagado") sinPrecioFalta = true;
+    if (!sinPrecio) {
+      const c = Math.round(Number(i.subtotal) * 100);
+      centavos += c;
+      if (i.estado === "pagado") cobrado += c;
+      else falta += c;
+    }
   }
   r.total = r.sinPrecio ? null : centavos / 100;
+  r.cobrado = cobrado / 100;
+  r.porCobrar = sinPrecioFalta ? null : falta / 100;
   return r;
+}
+
+/**
+ * Cuenta dividida: los ítems de un pedido agrupados por a quién se le cobran (el cliente del ítem, o el del pedido,
+ * o nadie). Solo cuenta lo que falta cobrar. Cada grupo: { clave, cliente, items, entregados, subtotal, sinPrecio }
+ * donde `entregados` son los códigos que ya se pueden cobrar y `subtotal` suma los entregados.
+ */
+export function gruposPorCliente(pedido) {
+  const grupos = new Map();
+  for (const i of pedido?.items ?? []) {
+    if (i.estado === "anulado" || i.estado === "pagado") continue;
+    const cliente = i.cliente ?? pedido?.cliente ?? null;
+    const clave = cliente?.id ?? "sin-cliente";
+    const g = grupos.get(clave) ?? { clave, cliente, items: [], entregados: [], subtotal: 0, sinPrecio: false, enCurso: 0 };
+    g.items.push(i);
+    if (i.estado === "entregado") {
+      g.entregados.push(i.code);
+      if (i.subtotal === null || i.subtotal === undefined) g.sinPrecio = true;
+      else g.subtotal = Math.round((g.subtotal + Number(i.subtotal)) * 100) / 100;
+    } else g.enCurso++;
+    grupos.set(clave, g);
+  }
+  // Los que tienen cliente primero, por nombre; el grupo sin cliente al final
+  return [...grupos.values()].sort((a, b) => (a.cliente ? 0 : 1) - (b.cliente ? 0 : 1) || (a.cliente?.nombre ?? "").localeCompare(b.cliente?.nombre ?? ""));
 }
 
 /**
@@ -266,14 +309,17 @@ export function accionesPedido(pedido, permisos) {
   const r = resumenItems(pedido?.items);
   let motivoNoCobrar = null;
   if (r.enCocina + r.listos > 0) motivoNoCobrar = `Faltan ${r.enCocina + r.listos} item(s) por entregar.`;
-  else if (r.entregados === 0) motivoNoCobrar = "No hay nada entregado que cobrar.";
+  else if (r.entregados === 0 && r.pagados === 0) motivoNoCobrar = "No hay nada entregado que cobrar.";
   return {
     agregar: abierto && permite(permisos, "documento:crear"),
     editarDatos: abierto && editar,
     cobrar: abierto && admin,
     puedeCobrarAhora: abierto && admin && motivoNoCobrar === null,
     motivoNoCobrar,
-    anular: abierto && admin,
+    // Con ítems ya cobrados no se anula el pedido entero (se anulan los que faltan y el pedido se cierra solo)
+    anular: abierto && admin && r.pagados === 0,
+    // Hay algo para cobrar por separado (el botón de cada ítem y de cada comensal)
+    dividir: abierto && admin && r.entregados > 0,
   };
 }
 
@@ -336,19 +382,33 @@ export function cuerpoClienteNuevo({ nombre, telefono, correo }) {
   return { ok: true, cuerpo: { nombre: n, ...(t ? { telefono: t } : {}), ...(c ? { correo: c } : {}) } };
 }
 
-/** Frase para el cajero tras cobrar: cuántos puntos ganó el cliente, o por qué no. Null si el pedido no tenía cliente. */
+// Por qué no acumuló; `n` es el sujeto ("El cliente", "Ana")
+const MOTIVOS_PUNTOS = {
+  sin_consentimiento: (n) => `${n} no aceptó el programa de puntos: no acumula`,
+  deshabilitada: () => "el programa de puntos está desactivado",
+  sin_monto: () => "no hay un total para dar puntos",
+  sin_puntos: () => "este monto no alcanza para ganar puntos",
+  cliente_inactivo: (n) => `${n} está desactivado: no acumula`,
+  cliente_no_encontrado: () => "no se encontró al cliente: no acumula",
+};
+const ptos = (n) => `${n} punto${n === 1 ? "" : "s"}`;
+const porque = (motivo, nombre) => MOTIVOS_PUNTOS[motivo]?.(nombre) ?? null;
+
+/**
+ * Frase para el cajero tras cobrar: cuántos puntos ganó el cliente, o por qué no. Con varios clientes (cuenta
+ * dividida) dice uno por uno. Null si lo cobrado no tenía cliente.
+ */
 export function textoPuntos(puntos) {
   if (!puntos) return null;
-  if (puntos.error) return "El pedido se cobró, pero no se pudieron registrar los puntos. Avisa a un administrador.";
-  if (puntos.acumulados > 0)
-    return `El cliente ganó ${puntos.acumulados} punto${puntos.acumulados === 1 ? "" : "s"}${puntos.saldo != null ? ` (saldo: ${puntos.saldo})` : ""}.`;
-  const motivos = {
-    sin_consentimiento: "El cliente no aceptó el programa de puntos: no acumula.",
-    deshabilitada: "El programa de puntos está desactivado.",
-    sin_monto: "El pedido no tiene un total para dar puntos.",
-    sin_puntos: "Este monto no alcanza para ganar puntos.",
-    cliente_inactivo: "El cliente está desactivado: no acumula.",
-    cliente_no_encontrado: "No se encontró al cliente: no acumula.",
-  };
-  return motivos[puntos.motivo] ?? null;
+  if (puntos.clientes?.length > 1) {
+    const partes = puntos.clientes.map((c) =>
+      c.error ? `${c.nombre}: no se pudieron registrar sus puntos` : c.acumulados > 0 ? `${c.nombre} ganó ${ptos(c.acumulados)}` : porque(c.motivo, c.nombre) ?? `${c.nombre} no acumuló`,
+    );
+    return `${partes.join(" · ")}.`;
+  }
+  const quien = puntos.clientes?.[0]?.nombre || "El cliente";
+  if (puntos.error) return "Se cobró, pero no se pudieron registrar los puntos. Avisa a un administrador.";
+  if (puntos.acumulados > 0) return `${quien} ganó ${ptos(puntos.acumulados)}${puntos.saldo != null ? ` (saldo: ${puntos.saldo})` : ""}.`;
+  const m = porque(puntos.motivo, quien);
+  return m ? `${m[0].toUpperCase()}${m.slice(1)}.` : null;
 }

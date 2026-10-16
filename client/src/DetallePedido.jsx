@@ -8,6 +8,8 @@ import {
   MOTIVOS_ANULACION,
   accionesPedido,
   accionesItem,
+  gruposPorCliente,
+  resumenItems,
   cuerpoDatos,
   formularioDesdePedido,
   validarFormulario,
@@ -41,6 +43,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   const [editando, setEditando] = useState(null); // formulario de los datos del pedido (mesa, a nombre de, entrega, notas)
   const [avisoPuntos, setAvisoPuntos] = useState(""); // lo que ganó el cliente al cobrar (sobrevive a la recarga)
   const [claveSinAnotar, setClaveSinAnotar] = useState(false);
+  const [clienteItem, setClienteItem] = useState(null); // código del ítem al que se le está eligiendo cliente
 
   // `conservarError`: tras un conflicto se recarga pero el aviso tiene que seguir a la vista.
   const cargar = useCallback(async (conservarError = false) => {
@@ -65,6 +68,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       await fn();
       setAnulando(null);
       setEditando(null);
+      setClienteItem(null);
       setEditandoPrecio(null);
       setMotivo("");
       setDetalleMotivo("");
@@ -87,6 +91,13 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
 
   const doc = c.doc ?? {};
   const acc = accionesPedido(c, permisos);
+  const res = resumenItems(c.items);
+  const grupos = acc.dividir ? gruposPorCliente(c) : [];
+  const cobrarItems = (codigos) =>
+    ejecutar(async () => {
+      const r = await api.pedidos.cobrarItems(c.code, { items: codigos });
+      setAvisoPuntos(textoPuntos(r.puntos) ?? "");
+    });
   const moneda = c.moneda;
   const cuerpoMotivo = { codigo: motivo, ...(detalleMotivo.trim() ? { detalle: detalleMotivo.trim() } : {}) };
 
@@ -131,7 +142,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       <h2 className="rs-subtitulo">Ítems</h2>
       <ul className="rs-lineas">
         {c.items.map((i) => {
-          const { pasos, anular, precio } = accionesItem(i.estado, permisos);
+          const { pasos, anular, precio, cliente: puedeCliente, cobrar: puedeCobrarItem } = accionesItem(i.estado, permisos);
           const nuevoPrecio = editandoPrecio?.code === i.code ? cuerpoPrecio(editandoPrecio.texto) : null;
           const enPedidoAbierto = c.estado === "abierto";
           return (
@@ -149,6 +160,24 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                 <small>Precio cambiado: {formatoDinero(i.precio, moneda)} (catálogo: {formatoDinero(i.precioCatalogo, moneda)})</small>
               )}
               {i.notas && <small>{i.notas}</small>}
+              {(i.cliente || (c.cliente && i.estado !== "anulado")) && (
+                <small>
+                  {i.cliente ? `Cliente: ${i.cliente.nombre}` : `Cuenta de ${c.cliente.nombre}`}
+                </small>
+              )}
+              {enPedidoAbierto && puedeCliente && clienteItem === i.code && permite(permisos, "cliente:leer") && (
+                <div>
+                  <SelectorCliente
+                    valor={i.cliente ? { id: i.cliente.id, nombre: i.cliente.nombre } : null}
+                    alCambiar={(cl) => ejecutar(() => api.items.asociarCliente(i.code, { clienteId: cl?.id ?? null, esperaVersion: i.version }))}
+                    puedeCrear={permite(permisos, "cliente:crear")}
+                    puedeCuenta={permite(permisos, "cliente:cuenta")}
+                    deshabilitado={trabajando}
+                    alPendiente={setClaveSinAnotar}
+                  />
+                  <button type="button" className="rs-btn" onClick={() => setClienteItem(null)}>Cerrar</button>
+                </div>
+              )}
               {enPedidoAbierto && precio && editandoPrecio?.code === i.code && (
                 <form
                   className="rs-precio"
@@ -173,8 +202,18 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                   {editandoPrecio.texto !== "" && !nuevoPrecio.ok && <small className="rs-precio__aviso" role="alert">{nuevoPrecio.error}</small>}
                 </form>
               )}
-              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || (precio && editandoPrecio?.code !== i.code)) && (
+              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || puedeCobrarItem || (puedeCliente && clienteItem !== i.code) || (precio && editandoPrecio?.code !== i.code)) && (
                 <div className="rs-acciones">
+                  {puedeCobrarItem && (
+                    <button type="button" className="rs-btn rs-btn--primario" disabled={trabajando || claveSinAnotar} onClick={() => cobrarItems([i.code])}>
+                      Cobrar {formatoDinero(i.subtotal, moneda)}
+                    </button>
+                  )}
+                  {puedeCliente && clienteItem !== i.code && permite(permisos, "cliente:leer") && (
+                    <button type="button" className="rs-btn" disabled={trabajando} onClick={() => setClienteItem(i.code)}>
+                      {i.cliente ? "Cambiar cliente" : "Asignar cliente"}
+                    </button>
+                  )}
                   {pasos.filter((p) => p.id === "entregar").map((p) => (
                     <button key={p.id} type="button" className="rs-btn rs-btn--primario" disabled={trabajando} onClick={() => ejecutar(() => api.items.paso(i.code, p.id, { esperaVersion: i.version }))}>
                       {p.etiqueta}
@@ -199,7 +238,36 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       <p className="rs-total">
         Total: <strong>{formatoDinero(c.total, moneda)}</strong>
         {c.total === null && <small> · hay ítems sin precio</small>}
+        {c.estado === "abierto" && res.pagados > 0 && (
+          <small> · cobrado {formatoDinero(res.cobrado, moneda)} · falta {formatoDinero(res.porCobrar, moneda)}</small>
+        )}
       </p>
+
+      {grupos.length > 0 && (grupos.length > 1 || res.pagados > 0) && (
+        <>
+          <h2 className="rs-subtitulo">Dividir la cuenta</h2>
+          <ul className="rs-lineas">
+            {grupos.map((g) => (
+              <li key={g.clave} className="rs-linea">
+                <div className="rs-linea__cab">
+                  <span>
+                    <strong>{g.cliente ? g.cliente.nombre : "Sin cliente"}</strong>
+                    <small> · {g.items.length} ítem{g.items.length === 1 ? "" : "s"}{g.enCurso ? ` (${g.enCurso} sin entregar)` : ""}</small>
+                  </span>
+                  <span className="rs-num">{g.sinPrecio ? "—" : formatoDinero(g.subtotal, moneda)}</span>
+                </div>
+                {g.entregados.length > 0 && (
+                  <div className="rs-acciones">
+                    <button type="button" className="rs-btn rs-btn--primario" disabled={trabajando || claveSinAnotar} onClick={() => cobrarItems(g.entregados)}>
+                      Cobrar {g.cliente ? `a ${g.cliente.nombre}` : "estos ítems"}
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <div className="rs-acciones">
         {acc.agregar && (
@@ -223,7 +291,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
               })
             }
           >
-            Cobrar {formatoDinero(c.total, moneda)}
+            {res.pagados > 0 ? "Cobrar lo que falta" : "Cobrar todo"} {formatoDinero(res.porCobrar, moneda)}
           </button>
         )}
         {acc.anular && !anulando && (

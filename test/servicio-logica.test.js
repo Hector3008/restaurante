@@ -76,6 +76,19 @@ function nucleoFalso() {
   };
 }
 
+// Fidelización falsa por ítem: `puntos(item)` recibe { subtotal, cliente } y devuelve lo que daría el núcleo
+function conPuntosPorItem(core, puntos) {
+  const llamadas = [];
+  core.fidelizacion = {
+    acumularPorDocumento: async ({ code }) => {
+      llamadas.push(code);
+      const d = core.docs.get(code);
+      return puntos({ subtotal: d.payload.doc.subtotal, cliente: d.snapshot?.cliente?.clienteId });
+    },
+  };
+  return llamadas;
+}
+
 const ADMIN = { usuarioId: "u1", permisos: ["*"] };
 const MESERO = { usuarioId: "u2", permisos: ["documento:crear", "documento:leer", "documento:editar", "estacion:creacion"] };
 const COCINA = { usuarioId: "u5", permisos: ["documento:leer", "documento:editar", "estacion:cocina"] };
@@ -323,9 +336,9 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       await assert.rejects(precio(CAJERO, "DOC_ITEM-0000001", 3, { esperaVersion: 9 }), cod("CONFLICTO_VERSION"));
     });
 
-    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existe el precio", () => {
+    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existen el precio y el cliente", () => {
       nuevo();
-      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
+      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "asociarCliente", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
     });
   });
 
@@ -342,8 +355,9 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       core.fidelizacion = {
         acumularPorDocumento: async (a) => {
           llamadas.push(a);
-          if (resultado instanceof Error) throw resultado;
-          return resultado;
+          const r = typeof resultado === "function" ? resultado(a) : resultado;
+          if (r instanceof Error) throw r;
+          return r;
         },
       };
       svc = crearServicio(core);
@@ -391,13 +405,14 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
 
     it("al cobrar un pedido con cliente informa los puntos acumulados", async () => {
       nuevo();
-      const llamadas = conPuntos({ acumulados: 18, clienteId: ID, saldo: 118 });
+      // Los puntos salen por ítem (13 y 5 de subtotal → 13 y 5 puntos); el pedido los suma
+      const llamadas = conPuntos(({ code }) => (code.endsWith("1") ? { acumulados: 13, saldo: 113 } : { acumulados: 5, saldo: 118 }));
       const c = await abrir();
       await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
       await entregarTodo(c);
       const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
-      assert.deepEqual(p.puntos, { acumulados: 18, saldo: 118 });
-      assert.deepEqual(llamadas, [{ empresaId: E, code: c.code }]);
+      assert.deepEqual(p.puntos, { acumulados: 18, saldo: 118, clientes: [{ id: ID, nombre: "Ana", acumulados: 18, saldo: 118 }] });
+      assert.deepEqual(llamadas.map((l) => l.code), ["DOC_ITEM-0000001", "DOC_ITEM-0000002"]);
     });
 
     it("sin consentimiento informa el motivo; sin cliente ni siquiera consulta", async () => {
@@ -406,12 +421,17 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       const a = await abrir();
       await svc.pedidos.asociarCliente(m(MESERO, a.code, { clienteId: ID }));
       await entregarTodo(a);
-      assert.deepEqual((await svc.pedidos.cobrar(m(CAJERO, a.code))).puntos, { acumulados: 0, saldo: null, motivo: "sin_consentimiento" });
+      assert.deepEqual((await svc.pedidos.cobrar(m(CAJERO, a.code))).puntos, {
+        acumulados: 0,
+        saldo: null,
+        motivo: "sin_consentimiento",
+        clientes: [{ id: ID, nombre: "Ana", acumulados: 0, saldo: null, motivo: "sin_consentimiento" }],
+      });
       const b = await abrir();
       await entregarTodo(b);
       const p = await svc.pedidos.cobrar(m(CAJERO, b.code));
       assert.equal(p.puntos, undefined);
-      assert.equal(llamadas.length, 1);
+      assert.equal(llamadas.length, 2, "solo se consultó por los dos ítems del pedido con cliente");
     });
 
     it("si la fidelización falla, el pago se mantiene y se avisa en puntos.error", async () => {
@@ -422,7 +442,8 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       await entregarTodo(c);
       const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
       assert.equal(p.estado, "pagado");
-      assert.deepEqual(p.puntos, { acumulados: 0, error: true });
+      assert.equal(p.puntos.error, true);
+      assert.equal(p.puntos.acumulados, 0);
     });
 
     it("sin fidelización en el núcleo, cobrar sigue igual y no trae puntos", async () => {
@@ -431,6 +452,175 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: ID }));
       await entregarTodo(c);
       assert.equal((await svc.pedidos.cobrar(m(CAJERO, c.code))).puntos, undefined);
+    });
+  });
+
+  describe("cuenta dividida: cliente por ítem y cobro por ítem", () => {
+    const A = "64b7f0f0f0f0f0f0f0f0f0a1";
+    const B = "64b7f0f0f0f0f0f0f0f0f0b2";
+    // Tres ítems entregados: Café x2 (13), Torta (5) y Sándwich (12)
+    const mesa = async () => {
+      const c = await abrir([{ codigo: "CAFE-1", cantidad: 2 }, { libre: { nombre: "Torta", precio: 5 } }, { codigo: "SAND-1" }]);
+      for (const i of c.items) {
+        await svc.items.marcarLista(m(COCINA, i.code));
+        await svc.items.entregar(m(MESERO, i.code));
+      }
+      return c;
+    };
+    const clienteDe = { [A]: "Ana", [B]: "Beto" };
+    const conClientes = () => {
+      core.clientes.instantanea = async ({ clienteId }) => ({ clienteId, nombre: clienteDe[clienteId] ?? "Otro", telefono: null });
+    };
+    const I1 = "DOC_ITEM-0000001", I2 = "DOC_ITEM-0000002", I3 = "DOC_ITEM-0000003";
+
+    it("asigna y quita el cliente de un ítem, y el resumen lo muestra", async () => {
+      nuevo();
+      conClientes();
+      await mesa();
+      const i = await svc.items.asociarCliente(m(MESERO, I1, { clienteId: A }));
+      assert.deepEqual(i.cliente, { id: A, nombre: "Ana" });
+      assert.equal(i.version, 2);
+      const c = await svc.pedidos.obtener(m(MESERO, "PD-0000001"));
+      assert.deepEqual(c.items.map((x) => x.cliente?.nombre ?? null), ["Ana", null, null]);
+      assert.equal((await svc.items.asociarCliente(m(MESERO, I1, { clienteId: null }))).cliente, null);
+    });
+
+    it("pide permiso, valida el id y la versión, y no cambia ítems pagados, anulados ni de pedidos cerrados", async () => {
+      nuevo();
+      conClientes();
+      await mesa();
+      await assert.rejects(svc.items.asociarCliente(m(SOLO_LEER, I1, { clienteId: A })), cod("PERMISO_INSUFICIENTE"));
+      await assert.rejects(svc.items.asociarCliente(m(MESERO, I1, { clienteId: 7 })), cod("DATOS_INVALIDOS"));
+      await assert.rejects(svc.items.asociarCliente(m(MESERO, I1, { clienteId: A, esperaVersion: 99 })), cod("CONFLICTO_VERSION"));
+      await svc.pedidos.cobrarItems(m(CAJERO, "PD-0000001", { items: [I1] }));
+      await assert.rejects(svc.items.asociarCliente(m(MESERO, I1, { clienteId: A })), cod("ESTADO_INVALIDO"));
+      await svc.items.anular(m(CAJERO, I2, { motivo }));
+      await assert.rejects(svc.items.asociarCliente(m(MESERO, I2, { clienteId: A })), cod("ESTADO_INVALIDO"));
+      await svc.pedidos.cobrar(m(CAJERO, "PD-0000001"));
+      await assert.rejects(svc.items.asociarCliente(m(MESERO, I3, { clienteId: A })), cod("ESTADO_INVALIDO"));
+    });
+
+    it("cobra solo los ítems elegidos: el pedido sigue abierto con lo cobrado y lo que falta", async () => {
+      nuevo();
+      const c = await mesa();
+      const p = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      assert.equal(p.estado, "abierto");
+      assert.deepEqual(p.items.map((i) => i.estado), ["pagado", "entregado", "entregado"]);
+      assert.deepEqual([p.total, p.cobrado, p.porCobrar], [30, 13, 17]);
+      assert.equal(p.puntos, undefined, "sin cliente no hay puntos");
+    });
+
+    it("al cobrar el último ítem el pedido se cierra solo y guarda el total de todos", async () => {
+      nuevo();
+      const c = await mesa();
+      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      const p = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2, I3] }));
+      assert.equal(p.estado, "pagado");
+      assert.equal(p.total, 30);
+      assert.deepEqual(p.historial.map((h) => h.a), ["abierto", "pagado"]);
+    });
+
+    it("cobrar todo lo que falta paga solo los ítems pendientes de cobro y cierra el pedido", async () => {
+      nuevo();
+      const c = await mesa();
+      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I3] }));
+      const p = await svc.pedidos.cobrar(m(CAJERO, c.code));
+      assert.equal(p.estado, "pagado");
+      assert.equal(p.total, 30);
+      assert.deepEqual(p.items.map((i) => i.estado), ["pagado", "pagado", "pagado"]);
+    });
+
+    it("los puntos de cada ítem van a su cliente; lo que no tiene cliente va al del pedido", async () => {
+      nuevo();
+      conClientes();
+      const llamadas = conPuntosPorItem(core, (c) => ({ acumulados: Math.floor(c.subtotal), saldo: 100, clienteId: c.cliente }));
+      svc = crearServicio(core);
+      const c = await mesa();
+      await svc.pedidos.asociarCliente(m(MESERO, c.code, { clienteId: B }));
+      await svc.items.asociarCliente(m(MESERO, I1, { clienteId: A }));
+      const p1 = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      assert.deepEqual(p1.puntos.clientes.map((x) => [x.nombre, x.acumulados]), [["Ana", 13]]);
+      const p2 = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2] }));
+      assert.deepEqual(p2.puntos.clientes.map((x) => [x.nombre, x.acumulados]), [["Beto", 5]], "el ítem sin cliente usa al del pedido");
+      const copia = core.docs.get(I2).snapshot.cliente;
+      assert.equal(copia.clienteId, B, "la copia queda guardada en el ítem");
+      assert.deepEqual(llamadas, [I1, I2]);
+    });
+
+    it("cobrar varios ítems de clientes distintos informa los puntos por cliente", async () => {
+      nuevo();
+      conClientes();
+      conPuntosPorItem(core, (c) => ({ acumulados: Math.floor(c.subtotal), saldo: 100, clienteId: c.cliente }));
+      svc = crearServicio(core);
+      const c = await mesa();
+      await svc.items.asociarCliente(m(MESERO, I1, { clienteId: A }));
+      await svc.items.asociarCliente(m(MESERO, I3, { clienteId: B }));
+      const p = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1, I3] }));
+      assert.deepEqual(p.puntos.clientes.map((x) => [x.nombre, x.acumulados]), [["Ana", 13], ["Beto", 12]]);
+      assert.equal(p.puntos.acumulados, 25);
+      assert.equal(p.puntos.saldo, null, "con varios clientes no hay un solo saldo");
+    });
+
+    it("no cobra ítems sin entregar, repetidos, ajenos, ya pagados ni con otro formato; ni un pedido cerrado", async () => {
+      nuevo();
+      const c = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
+      await svc.items.marcarLista(m(COCINA, I1));
+      await svc.items.entregar(m(MESERO, I1));
+      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2] })), cod("ESTADO_INVALIDO")); // en cocina
+      for (const malo of [undefined, [], "x", [I1, I1], [5], ["PD-0000001"]])
+        await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: malo })), cod("DATOS_INVALIDOS"));
+      const otro = await abrir([{ codigo: "CAFE-1" }]);
+      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [otro.items[0].code] })), cod("DATOS_INVALIDOS"));
+      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] })), cod("ESTADO_INVALIDO"));
+      await svc.items.anular(m(MESERO, I2, { motivo })); // lo último pendiente se anula: cierra solo
+      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] })), cod("ESTADO_INVALIDO"));
+    });
+
+    it("cobrar ítems pide la estación de administración", async () => {
+      nuevo();
+      const c = await mesa();
+      await assert.rejects(svc.pedidos.cobrarItems(m(MESERO, c.code, { items: [I1] })), cod("PERMISO_INSUFICIENTE"));
+      assert.equal(core.docs.get(I1).estado, "entregado");
+    });
+
+    it("un ítem pagado ya no se anula, no cambia de precio y el pedido no se anula entero", async () => {
+      nuevo();
+      const c = await mesa();
+      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      await assert.rejects(svc.items.anular(m(CAJERO, I1, { motivo })), cod("TRANSICION_INVALIDA"));
+      await assert.rejects(svc.items.cambiarPrecio(m(CAJERO, I1, { precio: 1 })), cod("ESTADO_INVALIDO"));
+      await assert.rejects(svc.pedidos.anular(m(CAJERO, c.code, { motivo })), cod("ESTADO_INVALIDO"));
+      assert.equal(core.docs.get(c.code).estado, "abierto");
+    });
+
+    it("anular lo último que faltaba cierra el pedido solo, aunque quien anula no cobre", async () => {
+      nuevo();
+      const c = await abrir([{ codigo: "CAFE-1" }, { codigo: "SAND-1" }]);
+      await svc.items.marcarLista(m(COCINA, I1));
+      await svc.items.entregar(m(MESERO, I1));
+      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      assert.equal(core.docs.get(c.code).estado, "abierto", "falta el sándwich, que sigue en cocina");
+      await svc.items.anular(m(MESERO, I2, { motivo })); // el mesero no tiene administración
+      const p = await svc.pedidos.obtener(m(MESERO, c.code));
+      assert.equal(p.estado, "pagado");
+      assert.equal(p.total, 6.5);
+    });
+
+    it("un pedido con todo anulado y nada cobrado no se cierra solo", async () => {
+      nuevo();
+      const c = await abrir([{ codigo: "CAFE-1" }]);
+      await svc.items.anular(m(MESERO, I1, { motivo }));
+      assert.equal((await svc.pedidos.obtener(m(MESERO, c.code))).estado, "abierto");
+    });
+
+    it("el listado de pedidos abiertos trae los ítems pagados", async () => {
+      nuevo();
+      const c = await mesa();
+      await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1] }));
+      const [p] = await svc.pedidos.listar({ empresaId: E, actor: MESERO, estado: ["abierto"] });
+      assert.deepEqual(p.items.map((i) => i.estado), ["pagado", "entregado", "entregado"]);
+      assert.deepEqual([p.cobrado, p.porCobrar], [13, 17]);
     });
   });
 

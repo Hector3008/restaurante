@@ -42,15 +42,15 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
   core.documentos.registrarTipo(TIPO_PEDIDO);
   // Campos del plato que el catálogo valida por tipo (descripción y foto de la carta pública).
   core.catalogo.registrarEsquema?.({ campos: CAMPOS_PLATO });
-  // Fidelización: un pedido que pasa a `pagado` acumula puntos a su cliente (si dio su consentimiento).
-  // El monto sale del total guardado al pagar y el cliente de la instantánea del pedido.
+  // Fidelización: cada ítem que se paga acumula puntos a SU cliente (o, si no tiene, al del pedido), si dio su
+  // consentimiento. Los puntos van por ítem porque la cuenta se puede dividir (5.27): el monto es el subtotal del ítem.
   core.fidelizacion?.registrarFuente({
-    tipo: TIPO_PEDIDO.tipo ?? "pedido",
+    tipo: TIPO_ITEM.tipo ?? "doc_item",
     estado: "pagado",
     extraer: (d) => ({
       clienteId: d.snapshot?.cliente?.clienteId ?? null,
-      monto: d.payload?.doc?.total ?? null,
-      detalle: "Pedido pagado",
+      monto: d.payload?.doc?.subtotal ?? null,
+      detalle: d.payload?.doc?.pedidoCode ? `Pedido ${d.payload.doc.pedidoCode} pagado` : "Pedido pagado",
     }),
   });
   const servicio = crearServicio(core);

@@ -1,4 +1,4 @@
-import { conEmpresa, permite } from "core";
+import { conEmpresa, permite, ErrorDocumento } from "core";
 import { ErrorPedido } from "./errores.js";
 import {
   validarCode,
@@ -12,7 +12,7 @@ import {
 
 export const TIPO_ITEM = "doc_item";
 export const TIPO_PEDIDO = "pedido";
-const ESTADOS_ITEM_ACTIVOS = ["en_cocina", "lista", "entregado"];
+const ESTADOS_ITEM_ACTIVOS = ["en_cocina", "lista", "entregado", "pagado"];
 
 /**
  * Servicio del restaurante: dos cosas separadas (ver tipos.js).
@@ -68,6 +68,10 @@ export function crearServicio(core) {
       precioModificado: Boolean(s.precioModificado),
       subtotal: x.subtotal ?? null,
       moneda: x.moneda ?? null,
+      // A quién se le cobra este ítem (cuenta dividida). null: al cliente del pedido, si lo tiene.
+      cliente: d.snapshot?.cliente?.clienteId
+        ? { id: String(d.snapshot.cliente.clienteId), nombre: d.snapshot.cliente.nombre ?? "" }
+        : null,
       creadoTs: d.createdAt ?? null,
     };
   };
@@ -84,6 +88,10 @@ export function crearServicio(core) {
     return centavos / 100;
   }
 
+  // Suma de lo que falta por cobrar (todo lo que no está anulado ni pagado) y de lo ya cobrado.
+  const porCobrarDe = (items) => totalDe(items.filter((i) => i.estado !== "pagado"));
+  const cobradoDe = (items) => totalDe(items.filter((i) => i.estado === "pagado"));
+
   const resumenPedido = (d, items) => {
     const x = d.payload?.doc ?? {};
     return {
@@ -98,6 +106,9 @@ export function crearServicio(core) {
         ? { id: String(d.snapshot.cliente.clienteId), nombre: d.snapshot.cliente.nombre ?? "" }
         : null,
       total: d.estado === "pagado" ? x.total ?? null : items ? totalDe(items) : x.total ?? null,
+      // Solo con el pedido abierto: lo ya cobrado a algunos ítems y lo que falta (null si algún ítem no tiene precio)
+      cobrado: d.estado === "abierto" && items ? cobradoDe(items) : null,
+      porCobrar: d.estado === "abierto" && items ? porCobrarDe(items) : null,
       items: items ?? null,
       creadoTs: d.createdAt ?? null,
     };
@@ -278,59 +289,153 @@ export function crearServicio(core) {
     });
   }
 
-  // Cobrar: todo el pedido de una vez, cuando todos los ítems ya se entregaron (o se anuló).
-  // `clienteId` (opcional) asocia al cliente en la misma transición (cobro de alguien que no se había cargado).
-  // Tras pagar, los puntos se acumulan por el evento del motor; aquí se vuelve a pedir (idempotente) para
-  // informar cuántos se dieron. Si la fidelización falla, el pago NO se revierte: queda en `puntos.error`.
-  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId }) {
-    exigir(actor, "documento:editar");
+  // ---------- cobrar (todo el pedido, o ítem por ítem) ----------
+  //
+  // Cada ítem se paga con su propia transición `entregado → pagado` (cuenta dividida, 5.27). El cliente que gana
+  // los puntos es el del ítem; si no tiene, el del pedido (se copia al ítem al pagar, queda guardado). El pedido se
+  // cierra (`pagado`) cuando ya no queda nada por cobrar ni por entregar: lo hace quien paga el último ítem, o
+  // el sistema si lo último que pasó fue anular un ítem pendiente.
+
+  const clienteIdValido = (clienteId) => {
     if (clienteId !== undefined && clienteId !== null && typeof clienteId !== "string")
       throw new ErrorPedido("DATOS_INVALIDOS", "clienteId debe ser un id o null");
+  };
+
+  // Paga los ítems indicados (ya validados como `entregado` de este pedido). Devuelve los puntos por cliente.
+  async function pagarItems({ empresaId, actor, pedido, codigos }) {
+    const pagados = [];
+    for (const codigo of codigos) {
+      const it = await cargarItem(codigo);
+      const cliente = it.snapshot?.cliente ?? pedido.snapshot?.cliente ?? null;
+      await documentos.transicionar({
+        code: codigo,
+        a: "pagado",
+        usuarioId: actor.usuarioId,
+        permisos: actor.permisos,
+        snapshot: { ...(it.snapshot ?? {}), cliente },
+      });
+      pagados.push(codigo);
+    }
+    return await puntosDeItems({ empresaId, codigos: pagados });
+  }
+
+  // Cierra el pedido si no queda nada por entregar ni por cobrar y algo se cobró. `sistema`: lo cierra el servicio
+  // (quien anuló un ítem puede no tener la estación de administración). Devuelve el pedido actual.
+  async function cerrarSiCompleto({ actor, code, sistema = false, esperaVersion }) {
+    const pedido = await cargarPedido(code);
+    if (pedido.estado !== "abierto") return pedido;
+    const completa = await completoPedido(pedido);
+    const vivos = completa.items.filter((i) => i.estado !== "anulado");
+    if (!vivos.length || vivos.some((i) => i.estado !== "pagado")) return pedido;
+    return await documentos.transicionar({
+      code,
+      a: "pagado",
+      usuarioId: actor.usuarioId,
+      permisos: actor.permisos,
+      sistema,
+      doc: { ...pedido.payload.doc, total: totalDe(completa.items) },
+      esperaVersion,
+    });
+  }
+
+  // Cobrar TODO lo que falta de un pedido, cuando ya está entregado (o anulado). Cierra el pedido.
+  // `clienteId` (opcional) asocia al cliente del pedido antes de cobrar (para los ítems que no tienen el suyo).
+  // Si la fidelización falla, el pago NO se revierte: queda en `puntos.error`.
+  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId }) {
+    exigir(actor, "documento:editar");
+    clienteIdValido(clienteId);
     return await conEmpresa(empresaId, async () => {
-      const pedido = await cargarPedido(code);
+      let pedido = await cargarPedido(code);
+      if (esperaVersion !== undefined && esperaVersion !== pedido.version)
+        throw new ErrorDocumento("CONFLICTO_VERSION", `El documento ${code} cambió mientras se trabajaba en él; vuelve a cargarlo`, { esperada: esperaVersion, real: pedido.version });
+      if (pedido.estado !== "abierto")
+        throw new ErrorDocumento("TRANSICION_INVALIDA", `No se puede pasar de '${pedido.estado}' a 'pagado' (pedido)`);
       const completa = await completoPedido(pedido);
       const sinEntregar = completa.items.filter((i) => i.estado === "en_cocina" || i.estado === "lista");
       if (sinEntregar.length)
         throw new ErrorPedido("ESTADO_INVALIDO", `hay ${sinEntregar.length} item(s) sin entregar`, {
           pendientes: sinEntregar.map((i) => i.code),
         });
-      if (!completa.items.some((i) => i.estado === "entregado"))
+      const porPagar = completa.items.filter((i) => i.estado === "entregado").map((i) => i.code);
+      if (!porPagar.length && !completa.items.some((i) => i.estado === "pagado"))
         throw new ErrorPedido("ESTADO_INVALIDO", "el pedido no tiene nada entregado que cobrar");
-      let snapshot;
       if (clienteId !== undefined) {
         const cliente = clienteId
           ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
           : null;
-        snapshot = { ...(pedido.snapshot ?? {}), cliente };
+        pedido = await documentos.nuevaVersion({
+          code,
+          snapshot: { ...(pedido.snapshot ?? {}), cliente },
+          usuarioId: actor.usuarioId,
+          esperaVersion: pedido.version,
+        });
       }
-      const d = await documentos.transicionar({
-        code,
-        a: "pagado",
-        usuarioId: actor.usuarioId,
-        permisos: actor.permisos,
-        doc: { ...pedido.payload.doc, total: totalDe(completa.items) },
-        ...(snapshot ? { snapshot } : {}),
-        esperaVersion,
-      });
-      const respuesta = await completoPedido(d);
-      const puntos = await puntosDelPago({ empresaId, code, d });
+      const puntos = await pagarItems({ empresaId, actor, pedido, codigos: porPagar });
+      await cerrarSiCompleto({ actor, code });
+      const respuesta = await completoPedido(await cargarPedido(code));
       return puntos ? { ...respuesta, puntos } : respuesta;
     });
   }
 
-  // Resultado de los puntos de un pedido recién pagado. null si no hay fidelización o el pedido no tiene cliente.
-  async function puntosDelPago({ empresaId, code, d }) {
-    if (!core.fidelizacion || !d.snapshot?.cliente?.clienteId) return null;
-    try {
-      const r = await core.fidelizacion.acumularPorDocumento({ empresaId, code });
-      return {
-        acumulados: r.acumulados ?? 0,
-        saldo: r.saldo ?? null,
-        ...(r.motivo ? { motivo: r.motivo } : {}),
-      };
-    } catch {
-      return { acumulados: 0, error: true };
+  // Cobrar solo algunos ítems (la parte de un comensal). Cada ítem debe estar entregado y ser de este pedido.
+  // Si con esto no queda nada por cobrar, el pedido se cierra solo.
+  async function cobrarItems({ empresaId, actor, code, items: codigos }) {
+    exigir(actor, "documento:editar");
+    if (!Array.isArray(codigos) || !codigos.length || codigos.length > 100 || new Set(codigos).size !== codigos.length)
+      throw new ErrorPedido("DATOS_INVALIDOS", "items: una lista de 1 a 100 códigos de ítem, sin repetir");
+    if (codigos.some((c) => typeof c !== "string" || !/^DOC_ITEM-\d{7,}$/.test(c)))
+      throw new ErrorPedido("DATOS_INVALIDOS", "items: códigos de ítem inválidos");
+    return await conEmpresa(empresaId, async () => {
+      const pedido = await cargarPedido(code);
+      if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido ya no está abierto");
+      const completa = await completoPedido(pedido);
+      for (const c of codigos) {
+        const it = completa.items.find((i) => i.code === c);
+        if (!it) throw new ErrorPedido("DATOS_INVALIDOS", `el ítem ${c} no es de este pedido`);
+        if (it.estado !== "entregado") throw new ErrorPedido("ESTADO_INVALIDO", `el ítem ${c} no está entregado (${it.estado})`, { items: [c] });
+      }
+      const puntos = await pagarItems({ empresaId, actor, pedido, codigos });
+      await cerrarSiCompleto({ actor, code });
+      const respuesta = await completoPedido(await cargarPedido(code));
+      return puntos ? { ...respuesta, puntos } : respuesta;
+    });
+  }
+
+  // Los puntos de los ítems recién pagados, por cliente. null si ninguno tiene cliente o no hay fidelización.
+  // Un fallo de la fidelización no deshace el pago: se avisa en `error`.
+  async function puntosDeItems({ empresaId, codigos }) {
+    if (!core.fidelizacion) return null;
+    const porCliente = new Map();
+    let hayError = false;
+    for (const codigo of codigos) {
+      const it = await documentos.obtener({ code: codigo });
+      const cl = it?.snapshot?.cliente;
+      if (!cl?.clienteId) continue;
+      const id = String(cl.clienteId);
+      const fila = porCliente.get(id) ?? { id, nombre: cl.nombre ?? "", acumulados: 0, saldo: null, motivo: undefined };
+      try {
+        const r = await core.fidelizacion.acumularPorDocumento({ empresaId, code: codigo });
+        fila.acumulados += r.acumulados ?? 0;
+        if (r.saldo != null) fila.saldo = r.saldo;
+        if (!r.acumulados && r.motivo && !fila.motivo) fila.motivo = r.motivo;
+      } catch {
+        hayError = true;
+        fila.error = true;
+      }
+      porCliente.set(id, fila);
     }
+    if (!porCliente.size) return null;
+    const clientes = [...porCliente.values()].map(({ motivo, error, ...f }) => ({ ...f, ...(error ? { error: true } : {}), ...(motivo && !f.acumulados ? { motivo } : {}) }));
+    const total = clientes.reduce((n, c) => n + c.acumulados, 0);
+    if (hayError && !total) return { acumulados: 0, error: true, clientes };
+    const uno = clientes.length === 1 ? clientes[0] : null;
+    return {
+      acumulados: total,
+      saldo: uno ? uno.saldo : null,
+      ...(uno?.motivo ? { motivo: uno.motivo } : {}),
+      ...(hayError ? { error: true } : {}),
+      clientes,
+    };
   }
 
   // Anular el pedido anula también lo que siga en pie (con el mismo motivo). Si algún ítem no pudo
@@ -339,6 +444,12 @@ export function crearServicio(core) {
     exigir(actor, "documento:editar");
     return await conEmpresa(empresaId, async () => {
       const pedido = await cargarPedido(code);
+      // Lo ya cobrado no se deshace: se anulan los ítems que faltan y el pedido se cierra solo.
+      for (const c of pedido.payload.doc.codigosItems ?? []) {
+        const it = await documentos.obtener({ code: c });
+        if (it?.estado === "pagado")
+          throw new ErrorPedido("ESTADO_INVALIDO", "ya se cobraron ítems de este pedido: anula los que faltan en lugar de todo el pedido", { items: [c] });
+      }
       const d = await documentos.transicionar({
         code,
         a: "anulado",
@@ -406,6 +517,32 @@ export function crearServicio(core) {
         motivo,
         esperaVersion,
       });
+      // Si lo último que faltaba por entregar o cobrar se anuló, y ya se cobró algo, el pedido se cierra solo.
+      if (a === "anulado") await cerrarSiCompleto({ actor, code: item.payload.doc.pedidoCode, sistema: true });
+      return completoItem(d);
+    });
+  }
+
+  // A quién se le cobra un ítem (cuenta dividida): el cliente del ítem, o null para volver al del pedido.
+  // Solo con el pedido abierto y el ítem sin pagar ni anular. Guarda la copia (nombre, teléfono) en el ítem.
+  async function asociarClienteItem({ empresaId, actor, code, clienteId, esperaVersion }) {
+    exigir(actor, "documento:editar");
+    clienteIdValido(clienteId ?? null);
+    return await conEmpresa(empresaId, async () => {
+      const item = await cargarItem(code);
+      const pedido = await cargarPedido(item.payload.doc.pedidoCode);
+      if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
+      if (item.estado === "pagado" || item.estado === "anulado")
+        throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no cambia de cliente`);
+      const cliente = clienteId
+        ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
+        : null;
+      const d = await documentos.nuevaVersion({
+        code,
+        snapshot: { ...(item.snapshot ?? {}), cliente },
+        usuarioId: actor.usuarioId,
+        esperaVersion: esperaVersion ?? item.version,
+      });
       return completoItem(d);
     });
   }
@@ -421,7 +558,8 @@ export function crearServicio(core) {
       const item = await cargarItem(code);
       const pedido = await cargarPedido(item.payload.doc.pedidoCode);
       if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
-      if (item.estado === "anulado") throw new ErrorPedido("ESTADO_INVALIDO", "un ítem anulado no cambia de precio");
+      if (item.estado === "anulado" || item.estado === "pagado")
+        throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no cambia de precio`);
       const s = item.snapshot?.item ?? {};
       const nuevo = { ...s, precio };
       if (s.origen !== "libre") {
@@ -450,6 +588,7 @@ export function crearServicio(core) {
       editar: editarPedido,
       asociarCliente,
       cobrar,
+      cobrarItems,
       anular: anularPedido,
     },
     items: {
@@ -459,6 +598,7 @@ export function crearServicio(core) {
       entregar: (p) => mover({ ...p, a: "entregado" }),
       anular: (p) => mover({ ...p, a: "anulado" }),
       cambiarPrecio,
+      asociarCliente: asociarClienteItem,
     },
   };
 }

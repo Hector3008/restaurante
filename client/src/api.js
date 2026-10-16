@@ -87,6 +87,8 @@ export const api = {
     editar: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}`, cuerpo),
     // clienteId: id del cliente o null para quitarlo (solo con el pedido abierto)
     asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}/cliente`, cuerpo),
+    // Cuenta dividida: cobra solo estos ítems entregados ({ items: ["DOC_ITEM-…"] }); el pedido se cierra solo con el último
+    cobrarItems: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar-items`, cuerpo),
     cobrar: (code, cuerpo = {}) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar`, cuerpo),
     anular: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/anular`, cuerpo),
   },
@@ -96,6 +98,8 @@ export const api = {
     listar: async (estado) => lista(await pedir("GET", `restaurante/items${consulta(estado, 200)}`), "items"),
     // ruta: lista | entregar | anular
     paso: (code, ruta, cuerpo = {}) => pedir("POST", `restaurante/items/${enc(code)}/${ruta}`, cuerpo),
+    // A quién se le cobra el ítem: clienteId del cliente o null (vuelve al cliente del pedido)
+    asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/items/${enc(code)}/cliente`, cuerpo),
   },
 
   // Clientes (cliente:leer / cliente:crear / cliente:cuenta): buscar por nombre, teléfono, correo o @usuario.
