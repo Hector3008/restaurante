@@ -1,0 +1,236 @@
+diff --git a/client/src/catalogo/Cuenta.jsx b/client/src/catalogo/Cuenta.jsx
+index 4a0b1e4..c5cf8f4 100644
+--- a/client/src/catalogo/Cuenta.jsx
++++ b/client/src/catalogo/Cuenta.jsx
+@@ -2,6 +2,7 @@ import { useState } from "react";
+ import { api } from "./api.js";
+ import Vales from "./Vales.jsx";
+ import Logros from "./Logros.jsx";
++import Retos from "./Retos.jsx";
+ import { cuerpoRegistro, formatoFecha, formatoPuntos, textoMovimiento, validarRegistro } from "./logica.js";
+ 
+ // Cuenta del cliente en la carta: entrar, crearla (con casilla de consentimiento para el programa de puntos),
+@@ -101,6 +102,7 @@ export default function Cuenta({ slug, estado, alCambiar }) {
+           </ul>
+         )}
+         {cliente.programaPuntos && puntos?.habilitada !== false && <Logros logros={puntos?.logros} />}
++        {cliente.programaPuntos && puntos?.habilitada !== false && <Retos retos={puntos?.retos} />}
+         {cliente.programaPuntos && puntos?.habilitada !== false && (
+           <Vales slug={slug} saldo={puntos?.saldo ?? 0} alCanjear={async () => alCambiar(await api.cliente(slug))} />
+         )}
+diff --git a/client/src/catalogo/Retos.jsx b/client/src/catalogo/Retos.jsx
+new file mode 100644
+index 0000000..42ecba0
+--- /dev/null
++++ b/client/src/catalogo/Retos.jsx
+@@ -0,0 +1,35 @@
++import { formatoCodigoVale, porcentajeReto, textoAvance, textoFaltan, textoVence } from "./logica.js";
++
++// Retos de colección (5.31): «prueba todo lo de una categoría y gana esto». `retos` viene en `puntos.retos` de
++// GET .../cliente. El vale del premio lo emite el sistema solo al pagar el último ítem que faltaba; aquí solo se muestra el avance.
++export default function Retos({ retos }) {
++  if (!Array.isArray(retos) || !retos.length) return null;
++  return (
++    <div className="cat-retos">
++      <h2 className="cat-vales__titulo">Retos</h2>
++      <ul className="cat-retos__lista">
++        {retos.map((r) => (
++          <li key={r.id} className={`cat-reto${r.completo ? " cat-reto--completo" : ""}`}>
++            <div className="cat-reto__cabecera">
++              <strong>{r.nombre}</strong>
++              <small>{r.completo ? "¡Completado!" : textoAvance(r)}</small>
++            </div>
++            <small>{r.descripcion || `Prueba todo en ${r.categoria}`} · Premio: {r.texto}</small>
++            {!r.completo && (
++              <>
++                <div className="cat-barra" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={porcentajeReto(r)} aria-label={`Avance de ${r.nombre}`}>
++                  <span style={{ width: `${porcentajeReto(r)}%` }} />
++                </div>
++                <small>{textoFaltan(r.faltan)}</small>
++              </>
++            )}
++            {r.vale && r.vale.estado === "activo" && (
++              <small>Tu vale: <strong className="cat-reto__codigo">{formatoCodigoVale(r.vale.codigo)}</strong> · {textoVence(r.vale.venceTs)}</small>
++            )}
++            {r.vale && r.vale.estado !== "activo" && <small>Vale {r.vale.estado === "usado" ? "usado" : r.vale.estado === "vencido" ? "vencido" : r.vale.estado}.</small>}
++          </li>
++        ))}
++      </ul>
++    </div>
++  );
++}
+diff --git a/client/src/catalogo/Vales.jsx b/client/src/catalogo/Vales.jsx
+index 6901c63..3dfa0c6 100644
+--- a/client/src/catalogo/Vales.jsx
++++ b/client/src/catalogo/Vales.jsx
+@@ -51,12 +51,14 @@ export default function Vales({ slug, saldo, alCanjear }) {
+               <li key={v.id} className="cat-vale">
+                 <div>
+                   <strong>{v.beneficio.nombre}</strong>
+-                  <small>{v.beneficio.texto} · {textoVence(v.venceTs)}</small>
++                  <small>{v.origen === "reto" ? "Premio de un reto · " : ""}{v.beneficio.texto} · {textoVence(v.venceTs)}</small>
+                 </div>
+                 <span className="cat-vale__codigo" aria-label={`Código ${v.codigo.split("").join(" ")}`}>{formatoCodigoVale(v.codigo)}</span>
+-                <button type="button" className="rs-btn" disabled={enCurso !== null} onClick={() => ejecutar(v.codigo, () => api.cancelarVale(slug, v.codigo))}>
+-                  {enCurso === v.codigo ? "Cancelando…" : "Cancelar y recuperar puntos"}
+-                </button>
++                {v.origen !== "reto" && (
++                  <button type="button" className="rs-btn" disabled={enCurso !== null} onClick={() => ejecutar(v.codigo, () => api.cancelarVale(slug, v.codigo))}>
++                    {enCurso === v.codigo ? "Cancelando…" : "Cancelar y recuperar puntos"}
++                  </button>
++                )}
+               </li>
+             ))}
+           </ul>
+diff --git a/client/src/catalogo/catalogo.css b/client/src/catalogo/catalogo.css
+index 92ec7ea..232cdf4 100644
+--- a/client/src/catalogo/catalogo.css
++++ b/client/src/catalogo/catalogo.css
+@@ -52,3 +52,12 @@
+ .cat-insignia { display: grid; gap: 2px; padding: 10px 12px; border: 1px dashed var(--color-borde); border-radius: var(--radio); opacity: .6; }
+ .cat-insignia small { color: var(--color-texto-suave); }
+ .cat-insignia--obtenida { opacity: 1; border-style: solid; border-color: var(--color-principal); background: color-mix(in srgb, var(--color-principal) 8%, var(--color-superficie)); }
++
++/* Retos de colección (5.31) */
++.cat-retos { display: grid; gap: 8px; }
++.cat-retos__lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
++.cat-reto { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--color-borde); border-radius: var(--radio); }
++.cat-reto__cabecera { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
++.cat-reto small { color: var(--color-texto-suave); }
++.cat-reto--completo { border-color: var(--color-principal); background: color-mix(in srgb, var(--color-principal) 8%, var(--color-superficie)); }
++.cat-reto__codigo { font-family: ui-monospace, monospace; letter-spacing: .12em; color: var(--color-principal); }
+diff --git a/client/src/catalogo/logica.js b/client/src/catalogo/logica.js
+index 84dc9f2..0a29bd2 100644
+--- a/client/src/catalogo/logica.js
++++ b/client/src/catalogo/logica.js
+@@ -132,3 +132,20 @@ export function textoVence(venceTs, ahora = new Date()) {
+ }
+ 
+ export const ESTADO_VALE = { usado: "Usado", cancelado: "Cancelado", vencido: "Vencido" };
++
++// ---------- retos de colección (5.31) ----------
++
++/** «2 de 5 cafés»: lo probado sobre el total del reto. */
++export const textoAvance = (r) => `${r?.logrados ?? 0} de ${r?.total ?? 0}`;
++
++/** Lo que falta por probar, para decirlo en una línea: «Te faltan: Moka y Cortado». */
++export function textoFaltan(faltan) {
++  const nombres = (Array.isArray(faltan) ? faltan : []).map((i) => i.nombre ?? i.codigo).filter(Boolean);
++  if (!nombres.length) return "";
++  if (nombres.length === 1) return `Te falta: ${nombres[0]}`;
++  if (nombres.length <= 4) return `Te faltan: ${nombres.slice(0, -1).join(", ")} y ${nombres.at(-1)}`;
++  return `Te faltan ${nombres.length}: ${nombres.slice(0, 3).join(", ")}…`;
++}
++
++/** Porcentaje (0 a 100) de avance de un reto. */
++export const porcentajeReto = (r) => (r?.total > 0 ? Math.round(((r.logrados ?? 0) / r.total) * 100) : 0);
+diff --git a/src/fuente-puntos.js b/src/fuente-puntos.js
+new file mode 100644
+index 0000000..a835aa0
+--- /dev/null
++++ b/src/fuente-puntos.js
+@@ -0,0 +1,13 @@
++// De un ítem pagado: a quién se le acumulan los puntos, cuánto, y qué plato era (arquitectura 5.27 y 5.31).
++// `d` es el documento `doc_item` que devuelve core.documentos.obtener.
++export function extraerConsumo(d) {
++  const item = d.snapshot?.item;
++  return {
++    clienteId: d.snapshot?.cliente?.clienteId ?? null,
++    monto: d.payload?.doc?.subtotal ?? null,
++    detalle: d.payload?.doc?.pedidoCode ? `Pedido ${d.payload.doc.pedidoCode} pagado` : "Pedido pagado",
++    // El plato del catálogo que se pagó: con esto el núcleo sabe qué cafés probó el cliente (retos, 5.31).
++    // Las líneas libres no cuentan: no son un plato de la carta.
++    itemCodigo: item?.origen === "catalogo" ? item.codigo ?? null : null,
++  };
++}
+diff --git a/src/index.js b/src/index.js
+index 382c2e5..46181a3 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -8,6 +8,7 @@ import { crearPublico, CAMPOS_PLATO } from "./publico.js";
+ import { montarRutasPublicas } from "./publico-http.js";
+ import { crearManejadoresVales } from "./publico-vales.js";
+ import { TIPO_ITEM, TIPO_PEDIDO } from "./tipos.js";
++import { extraerConsumo } from "./fuente-puntos.js";
+ 
+ export { TIPO_ITEM, TIPO_PEDIDO, MOTIVOS_ANULACION } from "./tipos.js";
+ export { ErrorPedido } from "./errores.js";
+@@ -48,11 +49,7 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
+   core.fidelizacion?.registrarFuente({
+     tipo: TIPO_ITEM.tipo ?? "doc_item",
+     estado: "pagado",
+-    extraer: (d) => ({
+-      clienteId: d.snapshot?.cliente?.clienteId ?? null,
+-      monto: d.payload?.doc?.subtotal ?? null,
+-      detalle: d.payload?.doc?.pedidoCode ? `Pedido ${d.payload.doc.pedidoCode} pagado` : "Pedido pagado",
+-    }),
++    extraer: extraerConsumo,
+   });
+   const servicio = crearServicio(core);
+ 
+diff --git a/test/fuente-puntos.test.js b/test/fuente-puntos.test.js
+new file mode 100644
+index 0000000..48fa52b
+--- /dev/null
++++ b/test/fuente-puntos.test.js
+@@ -0,0 +1,30 @@
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { extraerConsumo } from "../src/fuente-puntos.js";
++
++const doc = (item, extra = {}) => ({
++  snapshot: { item, cliente: { clienteId: "c1", nombre: "Ana" } },
++  payload: { doc: { subtotal: 12.5, pedidoCode: "PD-3", ...extra } },
++});
++
++test("un plato del catálogo pagado acumula con su código de ítem", () => {
++  assert.deepEqual(extraerConsumo(doc({ origen: "catalogo", codigo: "LATTE" })), {
++    clienteId: "c1",
++    monto: 12.5,
++    detalle: "Pedido PD-3 pagado",
++    itemCodigo: "LATTE",
++  });
++});
++
++test("una línea libre no cuenta como plato de la carta", () => {
++  assert.equal(extraerConsumo(doc({ origen: "libre", codigo: "X" })).itemCodigo, null);
++  assert.equal(extraerConsumo(doc(undefined)).itemCodigo, null);
++});
++
++test("sin cliente ni subtotal devuelve nulos, sin romper", () => {
++  const r = extraerConsumo({ snapshot: { item: { origen: "catalogo", codigo: "MOKA" } }, payload: {} });
++  assert.equal(r.clienteId, null);
++  assert.equal(r.monto, null);
++  assert.equal(r.detalle, "Pedido pagado");
++  assert.equal(r.itemCodigo, "MOKA");
++});
+diff --git a/test/publico.test.js b/test/publico.test.js
+index 1445424..b6ba4ab 100644
+--- a/test/publico.test.js
++++ b/test/publico.test.js
+@@ -7,7 +7,7 @@ import { ErrorCatalogo } from "core";
+ import { agruparPorCategoria, crearPublico, urlImagenSegura } from "../src/publico.js";
+ import { resenasDe } from "../src/resenas-demo.js";
+ import { limitadorPorIp, paginaCatalogo } from "../src/publico-http.js";
+-import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento, faltanPuntos, formatoCodigoVale, agruparVales, textoVence } from "../client/src/catalogo/logica.js";
++import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento, faltanPuntos, formatoCodigoVale, agruparVales, textoVence, textoAvance, textoFaltan, porcentajeReto } from "../client/src/catalogo/logica.js";
+ 
+ const middleware = () => (req, res, next) => next();
+ 
+@@ -362,3 +362,16 @@ test("textoVence cuenta días de calendario", () => {
+   assert.equal(textoVence(new Date(2026, 9, 1), hoy), "Vence hoy");
+   assert.equal(textoVence("basura", hoy), "");
+ });
++
++test("retos en la carta: avance, lo que falta y porcentaje", () => {
++  const r = { total: 4, logrados: 1, faltan: [{ codigo: "A", nombre: "Moka" }, { codigo: "B", nombre: "Cortado" }, { codigo: "C", nombre: "Flat" }] };
++  assert.equal(textoAvance(r), "1 de 4");
++  assert.equal(porcentajeReto(r), 25);
++  assert.equal(textoFaltan(r.faltan), "Te faltan: Moka, Cortado y Flat");
++  assert.equal(textoFaltan([{ codigo: "A", nombre: "Moka" }]), "Te falta: Moka");
++  assert.equal(textoFaltan([{ codigo: "A" }, { codigo: "B" }, { codigo: "C" }, { codigo: "D" }, { codigo: "E" }]), "Te faltan 5: A, B, C…");
++  assert.equal(textoFaltan([]), "");
++  assert.equal(textoFaltan(undefined), "");
++  assert.equal(textoAvance(undefined), "0 de 0");
++  assert.equal(porcentajeReto({ total: 0, logrados: 0 }), 0);
++});

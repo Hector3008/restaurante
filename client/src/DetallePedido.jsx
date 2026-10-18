@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
 import SelectorCliente from "./SelectorCliente.jsx";
+import Recibo from "./Recibo.jsx";
+import { METODOS_PAGO, PAGO_INICIAL, avisoRecibo, cuerpoPago, validarPagoForm } from "./recibos.js";
 import {
   CANALES,
   ESTADOS_PEDIDO,
@@ -18,7 +20,80 @@ import {
   formatoDinero,
   permite,
   textoPuntos,
+  normalizarCodigoVale,
+  puedeAplicarVale,
+  textoDescuento,
+  resumenVale,
 } from "./pedidos.js";
+
+// Aplicar un vale a un ítem: el mesero escribe el código que le muestra el cliente, lo revisa (de quién es, qué da,
+// si sirve) y recién entonces lo aplica. Revisar no gasta el vale.
+function FormularioVale({ estado, moneda, ocupado, alCambiar, alRevisar, alAplicar, alCerrar }) {
+  const r = resumenVale(estado.vale);
+  return (
+    <form
+      className="rs-vale"
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        if (r?.sirve && estado.codigo === normalizarCodigoVale(estado.texto)) alAplicar();
+        else alRevisar();
+      }}
+    >
+      <label>
+        <span>Código del vale</span>
+        <input
+          autoFocus
+          autoCapitalize="characters"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={10}
+          value={estado.texto}
+          onChange={(ev) => alCambiar({ texto: ev.target.value.toUpperCase(), vale: null, aviso: "" })}
+        />
+      </label>
+      {r && (
+        <p className={r.sirve ? "rs-vale__ok" : "rs-vale__no"} role="status">
+          <strong>{r.titulo}</strong> · {r.detalle} · de {r.cliente} · {r.estado}
+        </p>
+      )}
+      {estado.aviso && <small className="rs-precio__aviso" role="alert">{estado.aviso}</small>}
+      <div className="rs-acciones">
+        {r?.sirve ? (
+          <button type="submit" className="rs-btn rs-btn--primario" disabled={ocupado}>{ocupado ? "Aplicando…" : "Aplicar a este ítem"}</button>
+        ) : (
+          <button type="submit" className="rs-btn rs-btn--primario" disabled={ocupado || !estado.texto.trim()}>Revisar vale</button>
+        )}
+        <button type="button" className="rs-btn" onClick={alCerrar}>Cancelar</button>
+      </div>
+    </form>
+  );
+}
+
+// Los recibos de pago que ya emitió el pedido (uno por cobro). Se recarga cuando el pedido cambia (`clave`).
+function ListaRecibos({ code, clave, moneda, alVer }) {
+  const [lista, setLista] = useState([]);
+  useEffect(() => {
+    let vigente = true;
+    api.pedidos.recibos(code).then((l) => vigente && setLista(l)).catch(() => vigente && setLista([]));
+    return () => {
+      vigente = false;
+    };
+  }, [code, clave]);
+  if (!lista.length) return null;
+  return (
+    <>
+      <h2 className="rs-subtitulo">Recibos de pago</h2>
+      <ul className="rs-recibos">
+        {lista.map((r) => (
+          <li key={r.code}>
+            <span><strong>{r.code}</strong> · {r.metodoTexto ?? "forma de pago sin indicar"} · {formatoDinero(r.total, moneda)}</span>
+            <button type="button" className="rs-btn" onClick={() => alVer({ codigo: r.code })}>Ver recibo</button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 function Fila({ etiqueta, children }) {
   return (
@@ -48,6 +123,10 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   const [avisoPuntos, setAvisoPuntos] = useState(""); // lo que ganó el cliente al cobrar (sobrevive a la recarga)
   const [claveSinAnotar, setClaveSinAnotar] = useState(false);
   const [clienteItem, setClienteItem] = useState(null); // código del ítem al que se le está eligiendo cliente
+  const [valeItem, setValeItem] = useState(null); // { code, texto, vale, aviso }: el ítem al que se le está aplicando un vale
+  const [pago, setPago] = useState({ ...PAGO_INICIAL }); // forma de pago que se anota en el próximo cobro (5.32)
+  const [avisoRec, setAvisoRec] = useState(null); // { code } | { error: true }: el recibo del último cobro
+  const [verRecibo, setVerRecibo] = useState(null); // { codigo } | { cuenta: true }
 
   // `conservarError`: tras un conflicto se recarga pero el aviso tiene que seguir a la vista.
   const cargar = useCallback(async (conservarError = false) => {
@@ -106,11 +185,26 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
   const acc = accionesPedido(c, permisos);
   const res = resumenItems(c.items);
   const grupos = acc.dividir ? gruposPorCliente(c) : [];
-  const cobrarItems = (codigos) =>
-    ejecutar(codigos, async () => {
-      const r = await api.pedidos.cobrarItems(c.code, { items: codigos });
-      setAvisoPuntos(textoPuntos(r.puntos) ?? "");
-    });
+  // La forma de pago se valida antes de enviar; tras cobrar se limpian la propina y el efectivo (la forma de pago se queda).
+  const conPago = () => {
+    const problema = validarPagoForm(pago);
+    if (problema) {
+      setError(problema);
+      return null;
+    }
+    const p = cuerpoPago(pago);
+    return p ? { pago: p } : {};
+  };
+  const despuesDeCobrar = (r) => {
+    setAvisoPuntos(textoPuntos(r.puntos) ?? "");
+    setAvisoRec(avisoRecibo(r));
+    setPago((x) => ({ ...x, propina: "", recibido: "" }));
+  };
+  const cobrarItems = (codigos) => {
+    const extra = conPago();
+    if (!extra) return;
+    return ejecutar(codigos, async () => despuesDeCobrar(await api.pedidos.cobrarItems(c.code, { items: codigos, ...extra })));
+  };
   const moneda = c.moneda;
   const cuerpoMotivo = { codigo: motivo, ...(detalleMotivo.trim() ? { detalle: detalleMotivo.trim() } : {}) };
 
@@ -140,6 +234,19 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       </dl>
 
       {avisoPuntos && <p className="rs-puntos" role="status">{avisoPuntos}</p>}
+      {avisoRec && (
+        <p className="rs-aviso-recibo" role="status">
+          {avisoRec.error ? (
+            <span>Se cobró, pero no se pudo emitir el recibo. Avisa a un administrador.</span>
+          ) : (
+            <>
+              <span>Recibo <strong>{avisoRec.code}</strong> emitido.</span>
+              <button type="button" className="rs-btn" onClick={() => setVerRecibo({ codigo: avisoRec.code })}>Ver recibo</button>
+            </>
+          )}
+        </p>
+      )}
+      {verRecibo && <Recibo codigo={verRecibo.codigo} pedido={c.code} alCerrar={() => setVerRecibo(null)} />}
 
       {c.estado === "abierto" && permite(permisos, "documento:editar") && permite(permisos, "cliente:leer") && (
         <SelectorCliente
@@ -173,6 +280,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                 <small>Precio cambiado: {formatoDinero(i.precio, moneda)} (catálogo: {formatoDinero(i.precioCatalogo, moneda)})</small>
               )}
               {i.notas && <small>{i.notas}</small>}
+              {i.descuento && <small className="rs-descuento">{textoDescuento(i, moneda)}</small>}
               {(i.cliente || (c.cliente && i.estado !== "anulado")) && (
                 <small>
                   {i.cliente ? `Cliente: ${i.cliente.nombre}` : `Cuenta de ${c.cliente.nombre}`}
@@ -190,6 +298,27 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                   />
                   <button type="button" className="rs-btn" onClick={() => setClienteItem(null)}>Cerrar</button>
                 </div>
+              )}
+              {enPedidoAbierto && valeItem?.code === i.code && puedeAplicarVale(i, permisos) && (
+                <FormularioVale
+                  estado={valeItem}
+                  moneda={moneda}
+                  ocupado={ocupado(i.code)}
+                  alCambiar={(v) => setValeItem({ ...valeItem, ...v })}
+                  alRevisar={async () => {
+                    const codigo = normalizarCodigoVale(valeItem.texto);
+                    if (!codigo) return setValeItem({ ...valeItem, vale: null, aviso: "El código tiene 6 letras y números (por ejemplo K7M2QX)." });
+                    try {
+                      setValeItem({ ...valeItem, vale: await api.vales.consultar(codigo), aviso: "", codigo });
+                    } catch (e) {
+                      setValeItem({ ...valeItem, vale: null, aviso: e.status === 404 ? "No existe un vale con ese código." : mensajeDeError(e) });
+                    }
+                  }}
+                  alAplicar={() =>
+                    ejecutar(i.code, () => api.items.aplicarVale(i.code, { codigo: valeItem.codigo, esperaVersion: i.version }), () => setValeItem(null))
+                  }
+                  alCerrar={() => setValeItem(null)}
+                />
               )}
               {enPedidoAbierto && precio && editandoPrecio?.code === i.code && (
                 <form
@@ -215,7 +344,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                   {editandoPrecio.texto !== "" && !nuevoPrecio.ok && <small className="rs-precio__aviso" role="alert">{nuevoPrecio.error}</small>}
                 </form>
               )}
-              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || puedeCobrarItem || (puedeCliente && clienteItem !== i.code) || (precio && editandoPrecio?.code !== i.code)) && (
+              {enPedidoAbierto && (pasos.some((p) => p.id === "entregar") || anular || puedeCobrarItem || (puedeCliente && clienteItem !== i.code) || (puedeAplicarVale(i, permisos) && valeItem?.code !== i.code) || (precio && editandoPrecio?.code !== i.code)) && (
                 <div className="rs-acciones">
                   {puedeCobrarItem && (
                     <button type="button" className="rs-btn rs-btn--primario" disabled={ocupado(i.code) || claveSinAnotar} onClick={() => cobrarItems([i.code])}>
@@ -225,6 +354,11 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
                   {puedeCliente && clienteItem !== i.code && permite(permisos, "cliente:leer") && (
                     <button type="button" className="rs-btn" disabled={ocupado(i.code)} onClick={() => setClienteItem(i.code)}>
                       {i.cliente ? "Cambiar cliente" : "Asignar cliente"}
+                    </button>
+                  )}
+                  {puedeAplicarVale(i, permisos) && valeItem?.code !== i.code && (
+                    <button type="button" className="rs-btn" disabled={ocupado(i.code)} onClick={() => setValeItem({ code: i.code, texto: "", vale: null, aviso: "", codigo: null })}>
+                      Aplicar vale
                     </button>
                   )}
                   {pasos.filter((p) => p.id === "entregar").map((p) => (
@@ -255,6 +389,32 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           <small> · cobrado {formatoDinero(res.cobrado, moneda)} · falta {formatoDinero(res.porCobrar, moneda)}</small>
         )}
       </p>
+
+      {acc.cobrar && c.estado === "abierto" && res.entregados > 0 && (
+        <div className="rs-pago">
+          <h2 className="rs-subtitulo">Forma de pago</h2>
+          <div className="rs-pago__campos">
+            <label className="campo">
+              <span>Pago con</span>
+              <select value={pago.metodo} onChange={(e) => setPago({ ...pago, metodo: e.target.value, ...(e.target.value === "efectivo" ? {} : { recibido: "" }) })}>
+                <option value="">Sin indicar</option>
+                {METODOS_PAGO.map(([id, titulo]) => (<option key={id} value={id}>{titulo}</option>))}
+              </select>
+            </label>
+            <label className="campo">
+              <span>Propina (opcional)</span>
+              <input inputMode="decimal" value={pago.propina} disabled={!pago.metodo} onChange={(e) => setPago({ ...pago, propina: e.target.value })} />
+            </label>
+            {pago.metodo === "efectivo" && (
+              <label className="campo">
+                <span>Efectivo recibido (opcional)</span>
+                <input inputMode="decimal" value={pago.recibido} onChange={(e) => setPago({ ...pago, recibido: e.target.value })} />
+              </label>
+            )}
+          </div>
+          <small className="rs-vacio">Se anota en el recibo del próximo cobro. Con el efectivo recibido, el recibo calcula el vuelto.</small>
+        </div>
+      )}
 
       {grupos.length > 0 && (grupos.length > 1 || res.pagados > 0) && (
         <>
@@ -291,18 +451,18 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
             {doc.canal === "salon" ? "Cambiar mesa y notas" : doc.canal === "llevar" ? "Cambiar nombre y notas" : "Editar datos de entrega"}
           </button>
         )}
+        <button type="button" className="rs-btn" onClick={() => setVerRecibo({ cuenta: true })}>Ver cuenta</button>
         {acc.cobrar && (
           <button
             type="button"
             className="rs-btn rs-btn--primario"
             disabled={ocupadoPedido || !acc.puedeCobrarAhora || claveSinAnotar}
             title={acc.motivoNoCobrar ?? (claveSinAnotar ? "Anota primero la contraseña temporal del cliente" : undefined)}
-            onClick={() =>
-              ejecutar("pedido", async () => {
-                const r = await api.pedidos.cobrar(c.code, { esperaVersion: c.version });
-                setAvisoPuntos(textoPuntos(r.puntos) ?? "");
-              })
-            }
+            onClick={() => {
+              const extra = conPago();
+              if (!extra) return;
+              ejecutar("pedido", async () => despuesDeCobrar(await api.pedidos.cobrar(c.code, { esperaVersion: c.version, ...extra })));
+            }}
           >
             {res.pagados > 0 ? "Cobrar lo que falta" : "Cobrar todo"} {formatoDinero(res.porCobrar, moneda)}
           </button>
@@ -386,6 +546,8 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
           </div>
         </form>
       )}
+
+      <ListaRecibos code={c.code} clave={`${c.version}:${(c.recibos ?? []).length}`} moneda={moneda} alVer={setVerRecibo} />
 
       <h2 className="rs-subtitulo">Historial del pedido</h2>
       <ol className="rs-historial">

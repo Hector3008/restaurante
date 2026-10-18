@@ -1,4 +1,4 @@
-import { ErrorDocumento, ErrorCatalogo, ErrorCliente, ErrorAuth } from "core";
+import { ErrorDocumento, ErrorCatalogo, ErrorCliente, ErrorAuth, ErrorFidelizacion } from "core";
 import { ErrorPedido } from "./errores.js";
 
 const STATUS_DOCUMENTO = {
@@ -8,7 +8,7 @@ const STATUS_DOCUMENTO = {
 };
 
 function responder(res, e, next) {
-  if (e instanceof ErrorPedido || e instanceof ErrorCatalogo || e instanceof ErrorCliente || e instanceof ErrorAuth)
+  if (e instanceof ErrorPedido || e instanceof ErrorCatalogo || e instanceof ErrorCliente || e instanceof ErrorAuth || e instanceof ErrorFidelizacion)
     return res.status(e.status).json({ error: e.message, codigo: e.codigo, ...(e.detalle ?? {}) });
   if (e instanceof ErrorDocumento)
     return res
@@ -29,8 +29,9 @@ function responder(res, e, next) {
  *   POST /pedidos/:code/items   { items: [...] }          documento:crear   (más ítems en el mismo pedido)
  *   PUT  /pedidos/:code  { esperaVersion?, mesa, referencia, entrega, notas }   documento:editar
  *   PUT  /pedidos/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (solo abierto)
- *   POST /pedidos/:code/cobrar  { esperaVersion?, clienteId? }   documento:editar + estación administración (el motor)
- *   POST /pedidos/:code/cobrar-items  { items: ["DOC_ITEM-…"] }   igual (cuenta dividida: cobra solo esos ítems entregados;
+ *   POST /pedidos/:code/cobrar  { esperaVersion?, clienteId?, pago? }   documento:editar + estación administración (el motor)
+ *        `pago`: { metodo: efectivo|tarjeta|yape|plin|transferencia|otro, propina?, recibido? } (5.32); responde con `recibo`
+ *   POST /pedidos/:code/cobrar-items  { items: ["DOC_ITEM-…"], pago? }   igual (cuenta dividida: cobra solo esos ítems entregados;
  *        el pedido se cierra solo cuando no queda nada por cobrar)
  *   POST /pedidos/:code/anular  { motivo: { codigo, detalle? } }   igual
  *
@@ -42,10 +43,19 @@ function responder(res, e, next) {
  *   PUT  /items/:code/cliente  { clienteId|null, esperaVersion? }   documento:editar (a quién se le cobra el ítem)
  *   POST /items/:code/precio  { precio }                documento:editar + estación administración (solo el precio)
  *   POST /items/:code/anular  { motivo }                documento:editar (+ administración si ya salió de cocina)
+ *   POST /items/:code/vale  { codigo, esperaVersion? }  documento:editar + fidelizacion:canjear (aplica un vale de fidelización a ESE ítem)
+ *
+ * Recibos (5.32, no fiscales)
+ *   GET  /pedidos/:code/cuenta                          documento:leer   la cuenta del pedido (consumo, cobrado, falta); no se guarda
+ *   GET  /pedidos/:code/recibos                         documento:leer   { recibos } de pago emitidos en ese pedido
+ *   GET  /recibos/:code                                 documento:leer   un recibo de pago (RC-…)
+ *
+ * Vales (5.30)
+ *   GET  /vales/:codigo                                 fidelizacion:canjear   el vale, su beneficio y su cliente (no lo gasta)
  */
 export function montarRutas(router, core, servicio) {
   const { autenticar, requierePermiso, eventos, auth } = core;
-  const { pedidos, items } = servicio;
+  const { pedidos, items, vales, recibos } = servicio;
 
   const envolver = (escribe, fn) => async (req, res, next) => {
     try {
@@ -124,9 +134,9 @@ export function montarRutas(router, core, servicio) {
       `/pedidos/:code/${ruta}`,
       ...editar("administracion"),
       envolver(true, async (req, res) => {
-        const { esperaVersion, motivo, clienteId } = req.body ?? {};
+        const { esperaVersion, motivo, clienteId, pago } = req.body ?? {};
         res.status(200).json(
-          await pedidos[metodo]({ ...base(req), code: req.params.code, esperaVersion, motivo, ...(clienteId !== undefined ? { clienteId } : {}) }),
+          await pedidos[metodo]({ ...base(req), code: req.params.code, esperaVersion, motivo, ...(clienteId !== undefined ? { clienteId } : {}), ...(pago !== undefined ? { pago } : {}) }),
         );
       }),
     );
@@ -135,10 +145,27 @@ export function montarRutas(router, core, servicio) {
     "/pedidos/:code/cobrar-items",
     ...editar("administracion"),
     envolver(true, async (req, res) =>
-      res.status(200).json(await pedidos.cobrarItems({ ...base(req), code: req.params.code, items: req.body?.items })),
+      res.status(200).json(await pedidos.cobrarItems({ ...base(req), code: req.params.code, items: req.body?.items, ...(req.body?.pago !== undefined ? { pago: req.body.pago } : {}) })),
     ),
   );
   pasoPedido("anular", "anular");
+
+  // ---------- recibos (5.32) ----------
+  router.get(
+    "/pedidos/:code/cuenta",
+    ...leer,
+    envolver(false, async (req, res) => res.status(200).json(await pedidos.cuenta({ ...base(req), code: req.params.code }))),
+  );
+  router.get(
+    "/pedidos/:code/recibos",
+    ...leer,
+    envolver(false, async (req, res) => res.status(200).json({ recibos: await pedidos.recibos({ ...base(req), code: req.params.code }) })),
+  );
+  router.get(
+    "/recibos/:code",
+    ...leer,
+    envolver(false, async (req, res) => res.status(200).json(await recibos.obtener({ ...base(req), code: req.params.code }))),
+  );
 
   // ---------- ítems (ítems) ----------
   router.get(
@@ -173,6 +200,20 @@ export function montarRutas(router, core, servicio) {
       const { esperaVersion, clienteId } = req.body ?? {};
       res.status(200).json(await items.asociarCliente({ ...base(req), code: req.params.code, esperaVersion, clienteId: clienteId ?? null }));
     }),
+  );
+  router.post(
+    "/items/:code/vale",
+    ...editar("creacion"),
+    envolver(true, async (req, res) => {
+      const { esperaVersion, codigo } = req.body ?? {};
+      res.status(200).json(await items.aplicarVale({ ...base(req), code: req.params.code, codigo, esperaVersion }));
+    }),
+  );
+  router.get(
+    "/vales/:codigo",
+    autenticar(),
+    requierePermiso("fidelizacion:canjear"),
+    envolver(false, async (req, res) => res.status(200).json(await vales.consultar({ ...base(req), codigo: req.params.codigo }))),
   );
   router.post(
     "/items/:code/precio",

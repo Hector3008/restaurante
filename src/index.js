@@ -6,9 +6,11 @@ import { crearServicio } from "./servicio.js";
 import { montarRutas } from "./http.js";
 import { crearPublico, CAMPOS_PLATO } from "./publico.js";
 import { montarRutasPublicas } from "./publico-http.js";
-import { TIPO_ITEM, TIPO_PEDIDO } from "./tipos.js";
+import { crearManejadoresVales } from "./publico-vales.js";
+import { TIPO_ITEM, TIPO_PEDIDO, TIPO_RECIBO } from "./tipos.js";
+import { extraerConsumo } from "./fuente-puntos.js";
 
-export { TIPO_ITEM, TIPO_PEDIDO, MOTIVOS_ANULACION } from "./tipos.js";
+export { TIPO_ITEM, TIPO_PEDIDO, TIPO_RECIBO, MOTIVOS_ANULACION } from "./tipos.js";
 export { ErrorPedido } from "./errores.js";
 export { crearServicio } from "./servicio.js";
 
@@ -40,6 +42,7 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
 
   core.documentos.registrarTipo(TIPO_ITEM);
   core.documentos.registrarTipo(TIPO_PEDIDO);
+  core.documentos.registrarTipo(TIPO_RECIBO);
   // Campos del plato que el catálogo valida por tipo (descripción y foto de la carta pública).
   core.catalogo.registrarEsquema?.({ campos: CAMPOS_PLATO });
   // Fidelización: cada ítem que se paga acumula puntos a SU cliente (o, si no tiene, al del pedido), si dio su
@@ -47,11 +50,7 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
   core.fidelizacion?.registrarFuente({
     tipo: TIPO_ITEM.tipo ?? "doc_item",
     estado: "pagado",
-    extraer: (d) => ({
-      clienteId: d.snapshot?.cliente?.clienteId ?? null,
-      monto: d.payload?.doc?.subtotal ?? null,
-      detalle: d.payload?.doc?.pedidoCode ? `Pedido ${d.payload.doc.pedidoCode} pagado` : "Pedido pagado",
-    }),
+    extraer: extraerConsumo,
   });
   const servicio = crearServicio(core);
 
@@ -66,6 +65,7 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
     fs.readFileSync(path.join(dist, "catalogo.html"), "utf8"),
     undefined,
     core.cuentasCliente?.manejadores({ empresaDe: publico.empresaDe }) ?? null,
+    core.cuentasCliente && core.fidelizacion?.tickets ? crearManejadoresVales(core, publico.empresaDe) : null,
   );
   router.use(
     express.static(dist, {

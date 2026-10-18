@@ -1,8 +1,8 @@
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import { ErrorDocumento, ErrorCatalogo, permite } from "core";
-import { crearServicio, ErrorPedido, TIPO_ITEM, TIPO_PEDIDO } from "../src/index.js";
+import { ErrorDocumento, ErrorCatalogo, ErrorFidelizacion, calcularDescuento, permite } from "core";
+import { crearServicio, ErrorPedido, TIPO_ITEM, TIPO_PEDIDO, TIPO_RECIBO } from "../src/index.js";
 import { montarRutas } from "../src/http.js";
 
 // Núcleo falso en memoria: prueba la lógica del servicio y las rutas sin base de datos. El motor falso
@@ -11,7 +11,7 @@ import { montarRutas } from "../src/http.js";
 // Las reglas del motor de verdad se prueban en pedidos.test.js (MongoDB real).
 function nucleoFalso() {
   const docs = new Map();
-  const tipos = { doc_item: TIPO_ITEM, pedido: TIPO_PEDIDO };
+  const tipos = { doc_item: TIPO_ITEM, pedido: TIPO_PEDIDO, recibo: TIPO_RECIBO };
   const contadores = {};
   const llamadas = [];
   const catalogoItems = {
@@ -336,9 +336,9 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
       await assert.rejects(precio(CAJERO, "DOC_ITEM-0000001", 3, { esperaVersion: 9 }), cod("CONFLICTO_VERSION"));
     });
 
-    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existen el precio y el cliente", () => {
+    it("lo demás del ítem sigue sin editarse (cantidad, notas, qué ítem): solo existen el precio, el cliente y el vale", () => {
       nuevo();
-      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "asociarCliente", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
+      assert.deepEqual(Object.keys(svc.items).sort(), ["anular", "aplicarVale", "asociarCliente", "cambiarPrecio", "entregar", "listar", "marcarLista", "obtener"]);
     });
   });
 
@@ -729,6 +729,317 @@ describe("servicio: pedidos y ítems (núcleo falso)", () => {
   });
 });
 
+// Fidelización falsa para los vales: `vales` es un Map código → { estado, cliente: { id }, beneficio: { nombre }, beneficioCompleto }.
+// El cálculo del descuento es el real del núcleo; el consumo único y la liberación se simulan como los hace el núcleo.
+function conVales(core, vales) {
+  const llamadas = [];
+  const hallar = (codigo) => {
+    const v = vales.get(codigo);
+    if (!v) throw new ErrorFidelizacion("NO_ENCONTRADO", "vale no encontrado");
+    return v;
+  };
+  core.fidelizacion = {
+    tickets: {
+      consultar: async ({ codigo }) => ({ codigo, ...structuredClone(hallar(codigo)) }),
+      consumir: async ({ codigo, uso }) => {
+        llamadas.push(["consumir", codigo, uso]);
+        const v = hallar(codigo);
+        if (v.estado !== "activo") throw new ErrorFidelizacion("ESTADO_INVALIDO", "el vale ya fue usado");
+        v.estado = "usado";
+      },
+      liberar: async ({ codigo, itemCode }) => {
+        llamadas.push(["liberar", codigo, itemCode]);
+        hallar(codigo).estado = "activo";
+      },
+      calcularDescuento,
+    },
+  };
+  return llamadas;
+}
+
+const MESERO_VALES = { ...MESERO, permisos: [...MESERO.permisos, "fidelizacion:canjear"] };
+const vale = (extra = {}) => ({
+  estado: "activo",
+  cliente: { id: "64b7f0f0f0f0f0f0f0f0f0f0", nombre: "Ana" },
+  beneficio: { nombre: "Descuento" },
+  beneficioCompleto: { tipo: "descuento_porcentaje", valor: 50, itemCodigo: null },
+  ...extra,
+});
+
+describe("vales de fidelización aplicados a un ítem (5.30)", () => {
+  let core, svc, vales, llamadas;
+  const IT1 = "DOC_ITEM-0000001"; // 2 × Café (6.50) = 13
+  const IT2 = "DOC_ITEM-0000002"; // Torta del día 5
+  const aplicar = (code, codigo, actor = MESERO_VALES, extra = {}) => svc.items.aplicarVale({ empresaId: E, actor, code, codigo, ...extra });
+  beforeEach(async () => {
+    core = nucleoFalso();
+    vales = new Map([["K7M2QX", vale()]]);
+    llamadas = conVales(core, vales);
+    svc = crearServicio(core);
+    await svc.pedidos.crear({ empresaId: E, actor: MESERO, canal: "salon", mesa: "4", items: [{ codigo: "cafe-1", cantidad: 2 }, { libre: { nombre: "Torta del día", precio: 5 } }] });
+  });
+
+  it("un descuento en porcentaje baja el subtotal de ese ítem y guarda lo que había; el total se recalcula", async () => {
+    const it = await aplicar(IT1, "K7M2QX");
+    assert.equal(it.subtotal, 6.5);
+    assert.deepEqual(it.descuento, { vale: "K7M2QX", beneficio: "Descuento", monto: 6.5, subtotalAntes: 13 });
+    assert.equal((await svc.pedidos.obtener({ empresaId: E, actor: MESERO, code: "PD-0000001" })).total, 11.5);
+    assert.equal(vales.get("K7M2QX").estado, "usado");
+    assert.deepEqual(llamadas, [["consumir", "K7M2QX", { pedidoCode: "PD-0000001", itemCode: IT1, descuento: 6.5 }]]);
+  });
+
+  it("ítem gratis: descuenta UNA unidad del plato del vale y solo en ese plato", async () => {
+    vales.set("GRATIS", vale({ beneficioCompleto: { tipo: "item_gratis", valor: null, itemCodigo: "CAFE-1" } }));
+    await assert.rejects(aplicar(IT2, "GRATIS"), (e) => e.codigo === "ESTADO_INVALIDO" && /CAFE-1/.test(e.message));
+    assert.equal(vales.get("GRATIS").estado, "activo"); // no se gastó
+    const it = await aplicar(IT1, "GRATIS");
+    assert.equal(it.subtotal, 6.5);
+    assert.equal(it.descuento.monto, 6.5);
+  });
+
+  it("un ítem lleva un solo vale", async () => {
+    await aplicar(IT1, "K7M2QX");
+    vales.set("OTRO22", vale());
+    await assert.rejects(aplicar(IT1, "OTRO22"), cod("ESTADO_INVALIDO"));
+    assert.equal(vales.get("OTRO22").estado, "activo");
+  });
+
+  it("el vale gastado, cancelado o vencido no se aplica y no cambia nada", async () => {
+    for (const [estado, re] of [["usado", /ya fue usado/], ["cancelado", /cancelado/], ["vencido", /vencido/]]) {
+      vales.set("V" + estado, vale({ estado }));
+      await assert.rejects(aplicar(IT1, "V" + estado), (e) => e.codigo === "ESTADO_INVALIDO" && re.test(e.message));
+    }
+    assert.equal((await svc.items.obtener({ empresaId: E, actor: MESERO, code: IT1 })).subtotal, 13);
+    assert.deepEqual(llamadas, []);
+  });
+
+  it("un vale que no existe da 404 del núcleo", async () => {
+    await assert.rejects(aplicar(IT1, "ZZZZZZ"), cod("NO_ENCONTRADO"));
+  });
+
+  it("si el pedido o el ítem ya tiene cliente, el vale tiene que ser suyo", async () => {
+    await svc.pedidos.asociarCliente({ empresaId: E, actor: MESERO, code: "PD-0000001", clienteId: "64b7f0f0f0f0f0f0f0f0f0aa" });
+    await assert.rejects(aplicar(IT1, "K7M2QX"), (e) => e.codigo === "ESTADO_INVALIDO" && /otro cliente/.test(e.message));
+    assert.equal(vales.get("K7M2QX").estado, "activo");
+    await svc.pedidos.asociarCliente({ empresaId: E, actor: MESERO, code: "PD-0000001", clienteId: "64b7f0f0f0f0f0f0f0f0f0f0" });
+    assert.equal((await aplicar(IT1, "K7M2QX")).subtotal, 6.5);
+  });
+
+  it("sin cliente en el pedido el vale se acepta (el mesero ve de quién es antes de aplicar)", async () => {
+    assert.equal((await aplicar(IT2, "K7M2QX")).subtotal, 2.5);
+  });
+
+  it("no se aplica a un ítem pagado ni anulado, ni con el pedido cerrado", async () => {
+    await svc.items.anular({ empresaId: E, actor: MESERO, code: IT2, motivo });
+    await assert.rejects(aplicar(IT2, "K7M2QX"), cod("ESTADO_INVALIDO"));
+    await svc.pedidos.anular({ empresaId: E, actor: CAJERO, code: "PD-0000001", motivo });
+    await assert.rejects(aplicar(IT1, "K7M2QX"), cod("ESTADO_INVALIDO"));
+    assert.equal(vales.get("K7M2QX").estado, "activo");
+  });
+
+  it("si el ítem no se pudo actualizar, el vale se libera", async () => {
+    await assert.rejects(aplicar(IT1, "K7M2QX", MESERO_VALES, { esperaVersion: 99 }), cod("CONFLICTO_VERSION"));
+    assert.equal(vales.get("K7M2QX").estado, "activo");
+    assert.deepEqual(llamadas.map((l) => l[0]), ["consumir", "liberar"]);
+  });
+
+  it("necesita documento:editar y fidelizacion:canjear; el código tiene que venir", async () => {
+    await assert.rejects(aplicar(IT1, "K7M2QX", MESERO), cod("PERMISO_INSUFICIENTE"));
+    await assert.rejects(aplicar(IT1, "K7M2QX", { ...MESERO_VALES, permisos: ["fidelizacion:canjear", "documento:leer"] }), cod("PERMISO_INSUFICIENTE"));
+    await assert.rejects(aplicar(IT1, ""), cod("DATOS_INVALIDOS"));
+    await assert.rejects(aplicar(IT1, undefined), cod("DATOS_INVALIDOS"));
+  });
+
+  it("con un ítem rebajado ya no se cambia su precio", async () => {
+    await aplicar(IT1, "K7M2QX");
+    await assert.rejects(svc.items.cambiarPrecio({ empresaId: E, actor: CAJERO, code: IT1, precio: 9 }), (e) => e.codigo === "ESTADO_INVALIDO" && /vale/.test(e.message));
+  });
+
+  it("consultar un vale no lo gasta y pide fidelizacion:canjear", async () => {
+    const v = await svc.vales.consultar({ empresaId: E, actor: MESERO_VALES, codigo: "K7M2QX" });
+    assert.equal(v.cliente.nombre, "Ana");
+    assert.equal(vales.get("K7M2QX").estado, "activo");
+    await assert.rejects(svc.vales.consultar({ empresaId: E, actor: MESERO, codigo: "K7M2QX" }), cod("PERMISO_INSUFICIENTE"));
+  });
+
+  it("al pagar el ítem rebajado, los puntos se calculan sobre lo que de verdad se cobra", async () => {
+    const puntos = [];
+    core.fidelizacion.acumularPorDocumento = async ({ code }) => {
+      puntos.push(core.docs.get(code).payload.doc.subtotal);
+      return { acumulados: 3, saldo: 3 };
+    };
+    await svc.pedidos.asociarCliente({ empresaId: E, actor: MESERO, code: "PD-0000001", clienteId: "64b7f0f0f0f0f0f0f0f0f0f0" });
+    await aplicar(IT1, "K7M2QX");
+    for (const code of [IT1, IT2]) {
+      await svc.items.marcarLista({ empresaId: E, actor: COCINA, code });
+      await svc.items.entregar({ empresaId: E, actor: MESERO, code });
+    }
+    const r = await svc.pedidos.cobrar({ empresaId: E, actor: CAJERO, code: "PD-0000001" });
+    assert.equal(r.total, 11.5);
+    assert.deepEqual(puntos, [6.5, 5]);
+  });
+
+  it("sin fidelización en el núcleo no hay vales", async () => {
+    delete core.fidelizacion;
+    await assert.rejects(aplicar(IT1, "K7M2QX"), cod("ESTADO_INVALIDO"));
+  });
+});
+
+describe("recibos y cuenta (núcleo falso)", () => {
+  let core, svc;
+  const m = (actor, code, extra = {}) => ({ empresaId: E, actor, code, ...extra });
+  const nuevo = () => {
+    core = nucleoFalso();
+    core.modelos = { Empresa: { findById: () => ({ lean: async () => ({ _id: E, nombre: "Café Central" }) }) } };
+    svc = crearServicio(core);
+  };
+  const I1 = "DOC_ITEM-0000001", I2 = "DOC_ITEM-0000002", I3 = "DOC_ITEM-0000003";
+  // Café x2 (13), Torta (5), Sándwich (12): total 30, todo entregado
+  const mesa = async () => {
+    const c = await svc.pedidos.crear({ empresaId: E, actor: MESERO, canal: "salon", mesa: "4", items: [{ codigo: "CAFE-1", cantidad: 2 }, { libre: { nombre: "Torta", precio: 5 } }, { codigo: "SAND-1" }] });
+    for (const i of c.items) {
+      await svc.items.marcarLista(m(COCINA, i.code));
+      await svc.items.entregar(m(MESERO, i.code));
+    }
+    return c;
+  };
+  const silencio = async (fn) => {
+    const e = console.error;
+    console.error = () => {};
+    try { return await fn(); } finally { console.error = e; }
+  };
+
+  it("cobrar todo emite un recibo RC-… con lo cobrado, la forma de pago, la propina y el vuelto", async () => {
+    nuevo();
+    const c = await mesa();
+    const r = await svc.pedidos.cobrar(m(CAJERO, c.code, { pago: { metodo: "efectivo", propina: 2, recibido: 50 } }));
+    assert.equal(r.estado, "pagado");
+    assert.equal(r.recibo.code, "RC-0000001");
+    assert.equal(r.recibo.tipo, "pago");
+    assert.deepEqual([r.recibo.subtotal, r.recibo.propina, r.recibo.total, r.recibo.recibido, r.recibo.vuelto], [30, 2, 32, 50, 18]);
+    assert.equal(r.recibo.metodo, "efectivo");
+    assert.equal(r.recibo.metodoTexto, "Efectivo");
+    assert.equal(r.recibo.empresa.nombre, "Café Central");
+    assert.equal(r.recibo.mesa, "4");
+    assert.deepEqual(r.recibo.lineas.map((l) => [l.nombre, l.cantidad, l.subtotal]), [["Café", 2, 13], ["Torta", 1, 5], ["Sándwich", 1, 12]]);
+    assert.deepEqual(r.recibos, ["RC-0000001"]);
+    assert.equal(r.reciboError, undefined);
+  });
+
+  it("cobrar sin `pago` sigue funcionando: recibo con método sin indicar y sin propina", async () => {
+    nuevo();
+    const c = await mesa();
+    const r = await svc.pedidos.cobrar(m(CAJERO, c.code));
+    assert.equal(r.recibo.metodo, null);
+    assert.equal(r.recibo.metodoTexto, null);
+    assert.deepEqual([r.recibo.propina, r.recibo.total, r.recibo.vuelto], [0, 30, null]);
+  });
+
+  it("cada cobro por ítems deja su propio recibo, solo con lo que cobró", async () => {
+    nuevo();
+    const c = await mesa();
+    const a = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1], pago: { metodo: "yape" } }));
+    assert.equal(a.estado, "abierto");
+    assert.equal(a.recibo.code, "RC-0000001");
+    assert.deepEqual(a.recibo.lineas.map((l) => l.itemCode), [I1]);
+    assert.equal(a.recibo.total, 13);
+    const b = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2, I3], pago: { metodo: "tarjeta", propina: 1.5 } }));
+    assert.equal(b.estado, "pagado");
+    assert.equal(b.recibo.code, "RC-0000002");
+    assert.deepEqual([b.recibo.subtotal, b.recibo.total], [17, 18.5]);
+    assert.deepEqual(b.recibos, ["RC-0000001", "RC-0000002"]);
+    const lista = await svc.pedidos.recibos(m(SOLO_LEER, c.code));
+    assert.deepEqual(lista.map((r) => [r.code, r.metodo, r.total]), [["RC-0000001", "yape", 13], ["RC-0000002", "tarjeta", 18.5]]);
+    assert.equal((await svc.recibos.obtener(m(SOLO_LEER, "RC-0000002"))).metodo, "tarjeta");
+  });
+
+  it("cobrar lo que falta no emite recibo de lo ya cobrado antes", async () => {
+    nuevo();
+    const c = await mesa();
+    await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I3] }));
+    const r = await svc.pedidos.cobrar(m(CAJERO, c.code));
+    assert.equal(r.recibo.code, "RC-0000002");
+    assert.deepEqual(r.recibo.lineas.map((l) => l.itemCode), [I1, I2]);
+    assert.equal(r.recibo.total, 18);
+  });
+
+  it("un pago inválido se rechaza ANTES de cobrar nada", async () => {
+    nuevo();
+    const c = await mesa();
+    for (const pago of [{ metodo: "cripto" }, { metodo: "efectivo", propina: -1 }, { metodo: "yape", recibido: 40 }, "efectivo", { propina: 1 }, { metodo: "efectivo", extra: 1 }]) {
+      await assert.rejects(svc.pedidos.cobrar(m(CAJERO, c.code, { pago })), cod("DATOS_INVALIDOS"), JSON.stringify(pago));
+      await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1], pago })), cod("DATOS_INVALIDOS"), JSON.stringify(pago));
+    }
+    // El efectivo recibido tiene que alcanzar para lo que se cobra (más la propina)
+    await assert.rejects(svc.pedidos.cobrar(m(CAJERO, c.code, { pago: { metodo: "efectivo", recibido: 31, propina: 2 } })), cod("DATOS_INVALIDOS"));
+    await assert.rejects(svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1], pago: { metodo: "efectivo", recibido: 13.5, propina: 1 } })), cod("DATOS_INVALIDOS"));
+    const p = await svc.pedidos.obtener(m(CAJERO, c.code));
+    assert.equal(p.estado, "abierto");
+    assert.deepEqual(p.items.map((i) => i.estado), ["entregado", "entregado", "entregado"]);
+    assert.deepEqual(p.recibos, []);
+  });
+
+  it("si el recibo falla, el cobro se mantiene y se avisa con reciboError", async () => {
+    nuevo();
+    const c = await mesa();
+    const crear = core.documentos.crear;
+    core.documentos.crear = async (p) => { if (p.tipo === "recibo") throw new Error("falla"); return crear(p); };
+    const r = await silencio(() => svc.pedidos.cobrar(m(CAJERO, c.code)));
+    assert.equal(r.estado, "pagado");
+    assert.equal(r.reciboError, true);
+    assert.equal(r.recibo, undefined);
+  });
+
+  it("el recibo muestra el vale aplicado y los puntos no cambian el total", async () => {
+    nuevo();
+    const c = await mesa();
+    const doc = core.docs.get(I1);
+    doc.payload.doc = { ...doc.payload.doc, subtotal: 6.5, descuento: { vale: "K7M2QX", beneficio: "Café gratis", monto: 6.5, subtotalAntes: 13 } };
+    const r = await svc.pedidos.cobrar(m(CAJERO, c.code));
+    assert.equal(r.recibo.total, 23.5);
+    assert.equal(r.recibo.descuentos, 6.5);
+    assert.deepEqual(r.recibo.lineas[0].descuento, { vale: "K7M2QX", beneficio: "Café gratis", monto: 6.5 });
+  });
+
+  it("la cuenta muestra lo consumido, lo cobrado y lo que falta, sin lo anulado, y no se guarda", async () => {
+    nuevo();
+    const c = await mesa();
+    const antes = core.docs.size;
+    let cuenta = await svc.pedidos.cuenta(m(SOLO_LEER, c.code));
+    assert.deepEqual([cuenta.tipo, cuenta.total, cuenta.cobrado, cuenta.porCobrar, cuenta.estadoPedido], ["consumo", 30, 0, 30, "abierto"]);
+    assert.equal(cuenta.empresa.nombre, "Café Central");
+    assert.equal(cuenta.lineas.length, 3);
+    await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1], pago: { metodo: "plin", propina: 1 } }));
+    cuenta = await svc.pedidos.cuenta(m(SOLO_LEER, c.code));
+    assert.deepEqual([cuenta.total, cuenta.cobrado, cuenta.porCobrar, cuenta.propinas], [30, 13, 17, 1]);
+    assert.deepEqual(cuenta.lineas.map((l) => l.pagado), [true, false, false]);
+    assert.deepEqual(cuenta.pagos.map((p) => [p.code, p.total, p.metodoTexto]), [["RC-0000001", 14, "Plin"]]);
+    await svc.items.anular(m(CAJERO, I3, { motivo }));
+    cuenta = await svc.pedidos.cuenta(m(SOLO_LEER, c.code));
+    assert.deepEqual([cuenta.lineas.length, cuenta.total, cuenta.porCobrar], [2, 18, 5]);
+    assert.equal(core.docs.size, antes + 1, "solo el recibo del cobro se guardó; la cuenta no");
+  });
+
+  it("un pedido con un ítem sin precio deja la cuenta en null (nunca se inventa un precio)", async () => {
+    nuevo();
+    const c = await svc.pedidos.crear({ empresaId: E, actor: MESERO, canal: "llevar", referencia: "Ana", items: [{ codigo: "SINPRECIO" }] });
+    const cuenta = await svc.pedidos.cuenta(m(SOLO_LEER, c.code));
+    assert.deepEqual([cuenta.total, cuenta.cobrado, cuenta.porCobrar], [null, 0, null]);
+  });
+
+  it("leer pide documento:leer y los códigos se validan", async () => {
+    nuevo();
+    const c = await mesa();
+    const sin = { usuarioId: "x", permisos: [] };
+    await assert.rejects(svc.pedidos.cuenta(m(sin, c.code)), cod("PERMISO_INSUFICIENTE"));
+    await assert.rejects(svc.pedidos.recibos(m(sin, c.code)), cod("PERMISO_INSUFICIENTE"));
+    await assert.rejects(svc.recibos.obtener(m(sin, "RC-0000001")), cod("PERMISO_INSUFICIENTE"));
+    await assert.rejects(svc.recibos.obtener(m(SOLO_LEER, "RC-0000009")), cod("NO_ENCONTRADO"));
+    await assert.rejects(svc.recibos.obtener(m(SOLO_LEER, c.code)), cod("NO_ENCONTRADO"), "un pedido no se lee como recibo");
+    await assert.rejects(svc.recibos.obtener(m(SOLO_LEER, "otra")), cod("NO_ENCONTRADO"));
+  });
+});
+
 describe("rutas del restaurante (núcleo falso)", () => {
   let server, url, core;
   const sesion = { auth: { usuarioId: "u1", empresaId: "e1" }, rol: { permisos: ["*"] } };
@@ -845,5 +1156,50 @@ describe("rutas del restaurante (núcleo falso)", () => {
     assert.equal((await pedir("GET", "/items", undefined, { "x-sin-sesion": "1" })).status, 401);
     assert.equal((await pedir("POST", "/pedidos", pedido(), { "x-requested-with": "" })).status, 403);
     assert.equal((await pedir("POST", "/items/DOC_ITEM-0000001/lista", {}, { "x-requested-with": "" })).status, 403);
+  });
+
+  it("recibos por rutas: cobrar con pago, ver el recibo, los recibos del pedido y la cuenta", async () => {
+    let r = await pedir("POST", "/pedidos", pedido({ items: [{ codigo: "CAFE-1" }] }));
+    const c = await r.json();
+    const code = c.items[0].code;
+    await pedir("POST", `/items/${code}/lista`, {});
+    await pedir("POST", `/items/${code}/entregar`, {});
+    assert.equal((await pedir("POST", `/pedidos/${c.code}/cobrar`, { pago: { metodo: "bitcoin" } })).status, 400);
+    r = await pedir("POST", `/pedidos/${c.code}/cobrar`, { pago: { metodo: "efectivo", propina: 1, recibido: 10 } });
+    assert.equal(r.status, 200);
+    const cobrado = await r.json();
+    assert.equal(cobrado.estado, "pagado");
+    assert.deepEqual([cobrado.recibo.total, cobrado.recibo.vuelto], [7.5, 2.5]);
+    const rc = await (await pedir("GET", `/recibos/${cobrado.recibo.code}`)).json();
+    assert.equal(rc.metodoTexto, "Efectivo");
+    assert.equal((await pedir("GET", "/recibos/RC-9999999")).status, 404);
+    assert.equal((await pedir("GET", `/recibos/${c.code}`)).status, 404);
+    const lista = await (await pedir("GET", `/pedidos/${c.code}/recibos`)).json();
+    assert.deepEqual(lista.recibos.map((x) => x.code), [cobrado.recibo.code]);
+    const cuenta = await (await pedir("GET", `/pedidos/${c.code}/cuenta`)).json();
+    assert.deepEqual([cuenta.tipo, cuenta.total, cuenta.porCobrar, cuenta.pagos.length], ["consumo", 6.5, 0, 1]);
+  });
+
+  it("POST /items/:code/vale aplica el vale a ese ítem y GET /vales/:codigo lo muestra sin gastarlo", async () => {
+    const vales = new Map([["K7M2QX", vale()]]);
+    conVales(core, vales);
+    const c = await (await pedir("POST", "/pedidos", pedido())).json();
+    const code = c.items[0].code;
+    let r = await pedir("GET", "/vales/K7M2QX");
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).cliente.nombre, "Ana");
+    assert.equal(vales.get("K7M2QX").estado, "activo");
+    r = await pedir("POST", `/items/${code}/vale`, { codigo: "K7M2QX" });
+    assert.equal(r.status, 200);
+    const it = await r.json();
+    assert.equal(it.descuento.vale, "K7M2QX");
+    assert.equal(it.subtotal, 3.25);
+    r = await pedir("POST", `/items/${code}/vale`, { codigo: "K7M2QX" });
+    assert.equal(r.status, 409); // el ítem ya lleva un vale
+    r = await pedir("POST", `/items/${c.items[1].code}/vale`, { codigo: "K7M2QX" });
+    assert.equal(r.status, 409); // el vale ya se gastó
+    assert.equal((await pedir("GET", "/vales/ZZZZZZ")).status, 404);
+    assert.equal((await pedir("POST", `/items/${code}/vale`, {}, { "x-requested-with": "" })).status, 403);
+    delete core.fidelizacion; // el núcleo falso se comparte con las demás pruebas de rutas
   });
 });

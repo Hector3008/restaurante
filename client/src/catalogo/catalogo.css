@@ -30,3 +30,34 @@
 .res { background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: var(--radio); padding: 12px 14px; display: grid; gap: 6px; }
 .res-cab { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .res p { margin: 0; }
+
+/* Beneficios y vales (5.30) */
+.cat-vales { display: grid; gap: 10px; border-top: 1px solid var(--color-borde); padding-top: 10px; }
+.cat-vales__titulo { margin: 0; font-size: 1rem; }
+.cat-vales__lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cat-vale { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--color-borde); border-radius: var(--radio); }
+.cat-vale > div { display: grid; gap: 2px; min-width: 0; flex: 1 1 14rem; }
+.cat-vale small { color: var(--color-texto-suave); }
+.cat-vale__codigo { font-size: 1.5rem; font-weight: 700; letter-spacing: .12em; font-variant-numeric: tabular-nums; color: var(--color-principal); }
+.cat-vale--pasado { opacity: .65; }
+
+/* Niveles e insignias (5.30) */
+.cat-logros { display: grid; gap: 10px; border-top: 1px solid var(--color-borde); padding-top: 10px; }
+.cat-nivel { display: grid; gap: 6px; }
+.cat-nivel__titulo { margin: 0; font-size: 1.0625rem; }
+.cat-nivel__titulo small { color: var(--color-texto-suave); font-size: .85rem; }
+.cat-barra { height: 10px; border-radius: 999px; background: var(--color-borde); overflow: hidden; }
+.cat-barra span { display: block; height: 100%; background: var(--color-principal); border-radius: 999px; }
+.cat-insignias { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 8px; }
+.cat-insignia { display: grid; gap: 2px; padding: 10px 12px; border: 1px dashed var(--color-borde); border-radius: var(--radio); opacity: .6; }
+.cat-insignia small { color: var(--color-texto-suave); }
+.cat-insignia--obtenida { opacity: 1; border-style: solid; border-color: var(--color-principal); background: color-mix(in srgb, var(--color-principal) 8%, var(--color-superficie)); }
+
+/* Retos de colección (5.31) */
+.cat-retos { display: grid; gap: 8px; }
+.cat-retos__lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cat-reto { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--color-borde); border-radius: var(--radio); }
+.cat-reto__cabecera { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.cat-reto small { color: var(--color-texto-suave); }
+.cat-reto--completo { border-color: var(--color-principal); background: color-mix(in srgb, var(--color-principal) 8%, var(--color-superficie)); }
+.cat-reto__codigo { font-family: ui-monospace, monospace; letter-spacing: .12em; color: var(--color-principal); }

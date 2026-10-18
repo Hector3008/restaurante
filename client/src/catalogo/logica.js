@@ -102,3 +102,50 @@ export function cuerpoRegistro({ nombre, usuario, password, quierePuntos }) {
     quierePuntos: quierePuntos === true,
   };
 }
+
+// ---------- beneficios y vales (5.30) ----------
+
+/** Cuántos puntos le faltan al cliente para un beneficio (0 si ya le alcanza). */
+export const faltanPuntos = (beneficio, saldo) => Math.max(0, (Number(beneficio?.puntos) || 0) - (Number(saldo) || 0));
+
+/** «K7M2QX» → «K7M 2QX»: se lee y se dicta mejor en dos grupos. */
+export const formatoCodigoVale = (codigo) => (String(codigo ?? "").length === 6 ? `${codigo.slice(0, 3)} ${codigo.slice(3)}` : String(codigo ?? ""));
+
+/** Los vales que se pueden usar (activos, primero el que vence antes) y el resto (usados, cancelados, vencidos). */
+export function agruparVales(vales) {
+  const lista = Array.isArray(vales) ? vales : [];
+  return {
+    activos: lista.filter((v) => v.estado === "activo").sort((a, b) => new Date(a.venceTs) - new Date(b.venceTs)),
+    otros: lista.filter((v) => v.estado !== "activo"),
+  };
+}
+
+/** «Vence hoy», «Vence mañana», «Vence en 5 días». Los días se cuentan desde la fecha de hoy, no por horas. */
+export function textoVence(venceTs, ahora = new Date()) {
+  const f = new Date(venceTs);
+  if (Number.isNaN(f.getTime())) return "";
+  const dia = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const dias = Math.round((dia(f) - dia(ahora)) / 86_400_000);
+  if (dias <= 0) return "Vence hoy";
+  if (dias === 1) return "Vence mañana";
+  return `Vence en ${dias} días`;
+}
+
+export const ESTADO_VALE = { usado: "Usado", cancelado: "Cancelado", vencido: "Vencido" };
+
+// ---------- retos de colección (5.31) ----------
+
+/** «2 de 5 cafés»: lo probado sobre el total del reto. */
+export const textoAvance = (r) => `${r?.logrados ?? 0} de ${r?.total ?? 0}`;
+
+/** Lo que falta por probar, para decirlo en una línea: «Te faltan: Moka y Cortado». */
+export function textoFaltan(faltan) {
+  const nombres = (Array.isArray(faltan) ? faltan : []).map((i) => i.nombre ?? i.codigo).filter(Boolean);
+  if (!nombres.length) return "";
+  if (nombres.length === 1) return `Te falta: ${nombres[0]}`;
+  if (nombres.length <= 4) return `Te faltan: ${nombres.slice(0, -1).join(", ")} y ${nombres.at(-1)}`;
+  return `Te faltan ${nombres.length}: ${nombres.slice(0, 3).join(", ")}…`;
+}
+
+/** Porcentaje (0 a 100) de avance de un reto. */
+export const porcentajeReto = (r) => (r?.total > 0 ? Math.round(((r.logrados ?? 0) / r.total) * 100) : 0);

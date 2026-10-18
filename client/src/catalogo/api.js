@@ -48,5 +48,9 @@ export const api = {
   login: (slug, cuerpo) => pedir(`restaurante/publico/${enc(slug)}/cuenta/login`, { metodo: "POST", cuerpo, cuenta: true }),
   logout: (slug) => pedir(`restaurante/publico/${enc(slug)}/cuenta/logout`, { metodo: "POST", cuerpo: {}, cuenta: true }),
   cambiarPassword: (slug, cuerpo) => pedir(`restaurante/publico/${enc(slug)}/cuenta/password`, { metodo: "POST", cuerpo, cuenta: true }),
+  // Beneficios y vales (5.30): { beneficios, vales } del cliente de la sesión
+  vales: (slug) => pedir(`restaurante/publico/${enc(slug)}/cuenta/vales`, { cuenta: true }),
+  canjearVale: (slug, beneficioId) => pedir(`restaurante/publico/${enc(slug)}/cuenta/vales`, { metodo: "POST", cuerpo: { beneficioId }, cuenta: true }),
+  cancelarVale: (slug, codigo) => pedir(`restaurante/publico/${enc(slug)}/cuenta/vales/${enc(codigo)}/cancelar`, { metodo: "POST", cuerpo: {}, cuenta: true }),
   consentimiento: (slug, otorgado) => pedir(`restaurante/publico/${enc(slug)}/cuenta/consentimiento`, { metodo: "PUT", cuerpo: { otorgado }, cuenta: true }),
 };

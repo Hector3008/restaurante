@@ -128,3 +128,41 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .rs-temporal { display: grid; gap: 8px; padding: 12px; border: 1px dashed var(--color-borde); border-radius: 8px; }
 .rs-temporal code { font-size: 1.2rem; letter-spacing: 0.05em; user-select: all; }
 .rs-puntos { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: var(--color-fondo); border: 1px solid var(--color-borde); }
+
+/* Vales de fidelización (5.30) */
+.rs-vale { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: 10px; }
+.rs-vale label { display: flex; flex-direction: column; gap: 4px; }
+.rs-vale input { padding: 8px 10px; font: inherit; font-size: 1.1rem; letter-spacing: .15em; text-transform: uppercase; color: var(--color-texto); background: var(--color-fondo); border: 1px solid var(--color-borde); border-radius: 8px; }
+.rs-vale__ok, .rs-vale__no { margin: 0; }
+.rs-vale__ok { color: var(--color-principal); }
+.rs-vale__no { color: var(--color-error); }
+.rs-descuento { color: var(--color-principal); }
+
+/* Recibos y cuenta (5.32) */
+.rs-pago { display: grid; gap: 8px; margin: 12px 0; padding: 10px 12px; border: 1px dashed var(--color-borde); border-radius: 8px; }
+.rs-pago__campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 8px; }
+.rs-pago h2 { margin: 0; }
+.rs-aviso-recibo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: var(--color-fondo); border: 1px solid var(--color-borde); }
+.rs-recibos { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.rs-recibos li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.rs-recibo-caja { margin: 12px 0; display: grid; gap: 10px; }
+.rs-recibo { max-width: 22rem; margin: 0 auto; width: 100%; padding: 16px; background: #fff; color: #111; border: 1px solid var(--color-borde); border-radius: 6px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .875rem; }
+.rs-recibo__empresa { margin: 0 0 4px; text-align: center; font-size: 1.1rem; }
+.rs-recibo__titulo { margin: 0 0 8px; text-align: center; text-transform: uppercase; letter-spacing: .04em; }
+.rs-recibo__meta { margin: 0 0 8px; color: #444; }
+.rs-recibo__lineas { width: 100%; border-collapse: collapse; margin: 8px 0; border-top: 1px dashed #888; border-bottom: 1px dashed #888; }
+.rs-recibo__lineas td { padding: 4px 0; vertical-align: top; }
+.rs-recibo__lineas .rs-num { text-align: right; white-space: nowrap; padding-left: 8px; }
+.rs-recibo__desc { display: block; color: #555; }
+.rs-recibo__totales { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin: 0 0 8px; }
+.rs-recibo__totales dt, .rs-recibo__totales dd { margin: 0; }
+.rs-recibo__totales dd { text-align: right; }
+.rs-recibo__total { font-weight: 700; font-size: 1rem; }
+.rs-recibo__nota { margin: 8px 0 0; text-align: center; color: #555; font-size: .75rem; }
+.rs-recibo__acciones { justify-content: center; }
+@media print {
+  body * { visibility: hidden !important; }
+  .rs-recibo, .rs-recibo * { visibility: visible !important; }
+  .rs-recibo { position: absolute; left: 0; top: 0; width: 80mm; max-width: 80mm; margin: 0; padding: 4mm; border: 0; border-radius: 0; background: #fff !important; color: #000 !important; }
+  .rs-recibo__meta, .rs-recibo__desc, .rs-recibo__nota { color: #000 !important; }
+}

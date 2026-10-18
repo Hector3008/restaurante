@@ -7,7 +7,7 @@ import { ErrorCatalogo } from "core";
 import { agruparPorCategoria, crearPublico, urlImagenSegura } from "../src/publico.js";
 import { resenasDe } from "../src/resenas-demo.js";
 import { limitadorPorIp, paginaCatalogo } from "../src/publico-http.js";
-import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento } from "../client/src/catalogo/logica.js";
+import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento, faltanPuntos, formatoCodigoVale, agruparVales, textoVence, textoAvance, textoFaltan, porcentajeReto } from "../client/src/catalogo/logica.js";
 
 const middleware = () => (req, res, next) => next();
 
@@ -334,4 +334,44 @@ describe("lógica de la cuenta en la carta", () => {
     assert.equal(textoMovimiento({ tipo: "canje" }), "Canje de puntos");
     assert.equal(textoMovimiento({}), "Movimiento");
   });
+});
+
+test("beneficios y vales en la carta: puntos que faltan, código en dos grupos, vales activos primero", () => {
+  assert.equal(faltanPuntos({ puntos: 100 }, 40), 60);
+  assert.equal(faltanPuntos({ puntos: 100 }, 100), 0);
+  assert.equal(faltanPuntos({ puntos: 100 }, 250), 0);
+  assert.equal(faltanPuntos(undefined, undefined), 0);
+  assert.equal(formatoCodigoVale("K7M2QX"), "K7M 2QX");
+  assert.equal(formatoCodigoVale("abc"), "abc");
+  const g = agruparVales([
+    { id: "1", estado: "usado", venceTs: "2026-11-01" },
+    { id: "2", estado: "activo", venceTs: "2026-12-01" },
+    { id: "3", estado: "activo", venceTs: "2026-11-05" },
+    { id: "4", estado: "vencido", venceTs: "2026-10-01" },
+  ]);
+  assert.deepEqual(g.activos.map((v) => v.id), ["3", "2"]);
+  assert.deepEqual(g.otros.map((v) => v.id), ["1", "4"]);
+  assert.deepEqual(agruparVales(undefined), { activos: [], otros: [] });
+});
+
+test("textoVence cuenta días de calendario", () => {
+  const hoy = new Date(2026, 9, 17, 23, 30);
+  assert.equal(textoVence(new Date(2026, 9, 17, 23, 59), hoy), "Vence hoy");
+  assert.equal(textoVence(new Date(2026, 9, 18, 0, 5), hoy), "Vence mañana");
+  assert.equal(textoVence(new Date(2026, 9, 22, 12), hoy), "Vence en 5 días");
+  assert.equal(textoVence(new Date(2026, 9, 1), hoy), "Vence hoy");
+  assert.equal(textoVence("basura", hoy), "");
+});
+
+test("retos en la carta: avance, lo que falta y porcentaje", () => {
+  const r = { total: 4, logrados: 1, faltan: [{ codigo: "A", nombre: "Moka" }, { codigo: "B", nombre: "Cortado" }, { codigo: "C", nombre: "Flat" }] };
+  assert.equal(textoAvance(r), "1 de 4");
+  assert.equal(porcentajeReto(r), 25);
+  assert.equal(textoFaltan(r.faltan), "Te faltan: Moka, Cortado y Flat");
+  assert.equal(textoFaltan([{ codigo: "A", nombre: "Moka" }]), "Te falta: Moka");
+  assert.equal(textoFaltan([{ codigo: "A" }, { codigo: "B" }, { codigo: "C" }, { codigo: "D" }, { codigo: "E" }]), "Te faltan 5: A, B, C…");
+  assert.equal(textoFaltan([]), "");
+  assert.equal(textoFaltan(undefined), "");
+  assert.equal(textoAvance(undefined), "0 de 0");
+  assert.equal(porcentajeReto({ total: 0, logrados: 0 }), 0);
 });

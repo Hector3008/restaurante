@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { api } from "./api.js";
+import Vales from "./Vales.jsx";
+import Logros from "./Logros.jsx";
+import Retos from "./Retos.jsx";
 import { cuerpoRegistro, formatoFecha, formatoPuntos, textoMovimiento, validarRegistro } from "./logica.js";
 
 // Cuenta del cliente en la carta: entrar, crearla (con casilla de consentimiento para el programa de puntos),
@@ -97,6 +100,11 @@ export default function Cuenta({ slug, estado, alCambiar }) {
               </li>
             ))}
           </ul>
+        )}
+        {cliente.programaPuntos && puntos?.habilitada !== false && <Logros logros={puntos?.logros} />}
+        {cliente.programaPuntos && puntos?.habilitada !== false && <Retos retos={puntos?.retos} />}
+        {cliente.programaPuntos && puntos?.habilitada !== false && (
+          <Vales slug={slug} saldo={puntos?.saldo ?? 0} alCanjear={async () => alCambiar(await api.cliente(slug))} />
         )}
         <label className="rs-check">
           <input

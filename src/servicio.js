@@ -9,9 +9,11 @@ import {
   validarCoherencia,
   calcularTotales,
 } from "./validacion.js";
+import { armarCuenta, armarRecibo, reciboDto, validarPago } from "./recibo.js";
 
 export const TIPO_ITEM = "doc_item";
 export const TIPO_PEDIDO = "pedido";
+export const TIPO_RECIBO = "recibo";
 const ESTADOS_ITEM_ACTIVOS = ["en_cocina", "lista", "entregado", "pagado"];
 
 /**
@@ -42,11 +44,12 @@ export function crearServicio(core) {
     validarCode(code, prefijo);
     const d = await documentos.obtener({ code, version });
     if (!d || d.tipo !== tipo)
-      throw new ErrorPedido("NO_ENCONTRADO", prefijo === "PD" ? "pedido no encontrado" : "ítem no encontrado");
+      throw new ErrorPedido("NO_ENCONTRADO", prefijo === "PD" ? "pedido no encontrado" : prefijo === "RC" ? "recibo no encontrado" : "ítem no encontrado");
     return d;
   }
   const cargarPedido = (code, version) => cargar(code, TIPO_PEDIDO, "PD", version);
   const cargarItem = (code) => cargar(code, TIPO_ITEM, "DOC_ITEM");
+  const cargarRecibo = (code) => cargar(code, TIPO_RECIBO, "RC");
 
   // ---------- forma de lo que se devuelve ----------
 
@@ -67,6 +70,8 @@ export function crearServicio(core) {
       precioCatalogo: s.precioModificado ? s.precioCatalogo ?? null : s.precio ?? null,
       precioModificado: Boolean(s.precioModificado),
       subtotal: x.subtotal ?? null,
+      // Vale aplicado a este ítem (5.30): el subtotal ya viene con el descuento; aquí queda lo que había antes.
+      descuento: x.descuento ?? null,
       moneda: x.moneda ?? null,
       // A quién se le cobra este ítem (cuenta dividida). null: al cliente del pedido, si lo tiene.
       cliente: d.snapshot?.cliente?.clienteId
@@ -122,6 +127,7 @@ export function crearServicio(core) {
       ...resumenPedido(d, items),
       doc: d.payload?.doc ?? {},
       snapshot: d.snapshot ?? {},
+      recibos: d.payload?.doc?.codigosRecibos ?? [],
       historial: d.historial ?? [],
       creadoPor: d.creadoPor ?? null,
       versionPor: d.versionPor ?? null,
@@ -319,6 +325,84 @@ export function crearServicio(core) {
     return await puntosDeItems({ empresaId, codigos: pagados });
   }
 
+  // ---------- recibos (5.32) ----------
+  // Cada cobro deja un recibo de pago (documento `recibo`, número RC-…). Se crea DESPUÉS de cobrar y, si falla, el cobro
+  // no se revierte: la respuesta trae `reciboError` y se avisa. El pedido guarda la lista de sus recibos (`codigosRecibos`).
+
+  // Lo que se va a cobrar por estos ítems, en centavos; null si alguno no tiene precio.
+  const ventaCentavos = (items) => {
+    const t = totalDe(items);
+    return t === null ? null : Math.round(t * 100);
+  };
+
+  async function empresaDe(empresaId) {
+    try {
+      return (await core.modelos?.Empresa?.findById(empresaId).lean()) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function vincularRecibo({ actor, pedidoCode, reciboCode }) {
+    for (let intento = 0; ; intento++) {
+      const c = await cargarPedido(pedidoCode);
+      try {
+        await documentos.nuevaVersion({
+          code: pedidoCode,
+          doc: { ...c.payload.doc, codigosRecibos: [...(c.payload.doc.codigosRecibos ?? []), reciboCode] },
+          usuarioId: actor.usuarioId,
+          esperaVersion: c.version,
+        });
+        return;
+      } catch (e) {
+        if (e?.codigo !== "CONFLICTO_VERSION" || intento >= 4) throw e;
+      }
+    }
+  }
+
+  // Emite el recibo de los ítems recién cobrados. Devuelve { recibo } o { reciboError: true }; null si no se cobró nada.
+  async function emitirRecibo({ empresaId, actor, pedidoCode, codigos, pago }) {
+    if (!codigos.length) return null;
+    try {
+      const pedido = await completoPedido(await cargarPedido(pedidoCode));
+      const items = pedido.items.filter((i) => codigos.includes(i.code));
+      const doc = armarRecibo({ pedido, items, pago, empresa: await empresaDe(empresaId), moneda: pedido.moneda });
+      const creado = await documentos.crear({ tipo: TIPO_RECIBO, usuarioId: actor.usuarioId, snapshot: {}, doc });
+      await vincularRecibo({ actor, pedidoCode, reciboCode: creado.code });
+      return { recibo: reciboDto(creado) };
+    } catch (e) {
+      console.error(`restaurante: no se pudo emitir el recibo del pedido ${pedidoCode}`, e);
+      return { reciboError: true };
+    }
+  }
+
+  async function recibosDe(pedido) {
+    const codigos = pedido.doc?.codigosRecibos ?? pedido.payload?.doc?.codigosRecibos ?? [];
+    const docs = await Promise.all(codigos.map((c) => documentos.obtener({ code: c })));
+    return docs.filter((d) => d && d.tipo === TIPO_RECIBO).map(reciboDto);
+  }
+
+  /** Un recibo de pago por su número. */
+  async function obtenerRecibo({ empresaId, actor, code }) {
+    exigir(actor, "documento:leer");
+    return await conEmpresa(empresaId, async () => reciboDto(await cargarRecibo(code)));
+  }
+
+  /** Los recibos de pago de un pedido, en el orden en que se emitieron. */
+  async function recibosDelPedido({ empresaId, actor, code }) {
+    exigir(actor, "documento:leer");
+    return await conEmpresa(empresaId, async () => await recibosDe(await completoPedido(await cargarPedido(code))));
+  }
+
+  /** La cuenta del pedido (recibo de consumo): lo consumido, lo cobrado y lo que falta. No se guarda. */
+  async function cuentaDelPedido({ empresaId, actor, code }) {
+    exigir(actor, "documento:leer");
+    return await conEmpresa(empresaId, async () => {
+      const pedido = await completoPedido(await cargarPedido(code));
+      return armarCuenta({ pedido, recibos: await recibosDe(pedido), empresa: await empresaDe(empresaId) });
+    });
+  }
+
   // Cierra el pedido si no queda nada por entregar ni por cobrar y algo se cobró. `sistema`: lo cierra el servicio
   // (quien anuló un ítem puede no tener la estación de administración). Devuelve el pedido actual.
   async function cerrarSiCompleto({ actor, code, sistema = false, esperaVersion }) {
@@ -341,7 +425,7 @@ export function crearServicio(core) {
   // Cobrar TODO lo que falta de un pedido, cuando ya está entregado (o anulado). Cierra el pedido.
   // `clienteId` (opcional) asocia al cliente del pedido antes de cobrar (para los ítems que no tienen el suyo).
   // Si la fidelización falla, el pago NO se revierte: queda en `puntos.error`.
-  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId }) {
+  async function cobrar({ empresaId, actor, code, esperaVersion, clienteId, pago }) {
     exigir(actor, "documento:editar");
     clienteIdValido(clienteId);
     return await conEmpresa(empresaId, async () => {
@@ -359,6 +443,7 @@ export function crearServicio(core) {
       const porPagar = completa.items.filter((i) => i.estado === "entregado").map((i) => i.code);
       if (!porPagar.length && !completa.items.some((i) => i.estado === "pagado"))
         throw new ErrorPedido("ESTADO_INVALIDO", "el pedido no tiene nada entregado que cobrar");
+      const pagoOk = validarPago(pago, ventaCentavos(completa.items.filter((i) => porPagar.includes(i.code))));
       if (clienteId !== undefined) {
         const cliente = clienteId
           ? await clientes.instantanea({ empresaId, clienteId, campos: ["nombre", "telefono"] })
@@ -371,15 +456,16 @@ export function crearServicio(core) {
         });
       }
       const puntos = await pagarItems({ empresaId, actor, pedido, codigos: porPagar });
+      const recibo = await emitirRecibo({ empresaId, actor, pedidoCode: code, codigos: porPagar, pago: pagoOk });
       await cerrarSiCompleto({ actor, code });
       const respuesta = await completoPedido(await cargarPedido(code));
-      return puntos ? { ...respuesta, puntos } : respuesta;
+      return { ...respuesta, ...(puntos ? { puntos } : {}), ...(recibo ?? {}) };
     });
   }
 
   // Cobrar solo algunos ítems (la parte de un comensal). Cada ítem debe estar entregado y ser de este pedido.
   // Si con esto no queda nada por cobrar, el pedido se cierra solo.
-  async function cobrarItems({ empresaId, actor, code, items: codigos }) {
+  async function cobrarItems({ empresaId, actor, code, items: codigos, pago }) {
     exigir(actor, "documento:editar");
     if (!Array.isArray(codigos) || !codigos.length || codigos.length > 100 || new Set(codigos).size !== codigos.length)
       throw new ErrorPedido("DATOS_INVALIDOS", "items: una lista de 1 a 100 códigos de ítem, sin repetir");
@@ -394,10 +480,12 @@ export function crearServicio(core) {
         if (!it) throw new ErrorPedido("DATOS_INVALIDOS", `el ítem ${c} no es de este pedido`);
         if (it.estado !== "entregado") throw new ErrorPedido("ESTADO_INVALIDO", `el ítem ${c} no está entregado (${it.estado})`, { items: [c] });
       }
+      const pagoOk = validarPago(pago, ventaCentavos(completa.items.filter((i) => codigos.includes(i.code))));
       const puntos = await pagarItems({ empresaId, actor, pedido, codigos });
+      const recibo = await emitirRecibo({ empresaId, actor, pedidoCode: code, codigos, pago: pagoOk });
       await cerrarSiCompleto({ actor, code });
       const respuesta = await completoPedido(await cargarPedido(code));
-      return puntos ? { ...respuesta, puntos } : respuesta;
+      return { ...respuesta, ...(puntos ? { puntos } : {}), ...(recibo ?? {}) };
     });
   }
 
@@ -560,6 +648,8 @@ export function crearServicio(core) {
       if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
       if (item.estado === "anulado" || item.estado === "pagado")
         throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no cambia de precio`);
+      if (item.payload?.doc?.descuento)
+        throw new ErrorPedido("ESTADO_INVALIDO", "el ítem tiene un vale aplicado: su precio ya no se cambia (anula el ítem y pídelo de nuevo)");
       const s = item.snapshot?.item ?? {};
       const nuevo = { ...s, precio };
       if (s.origen !== "libre") {
@@ -579,6 +669,80 @@ export function crearServicio(core) {
     });
   }
 
+  // ---------- vales de fidelización (5.30) ----------
+
+  // El núcleo trae la fidelización en el gateway real; sin ella (pruebas, otro montaje) no hay vales.
+  const vales = () => {
+    if (!core.fidelizacion?.tickets) throw new ErrorPedido("ESTADO_INVALIDO", "los vales de fidelización no están disponibles");
+    return core.fidelizacion.tickets;
+  };
+
+  // Mira un vale por su código, sin gastarlo: qué beneficio es, de quién y si sirve todavía.
+  async function consultarVale({ empresaId, actor, codigo }) {
+    exigir(actor, "fidelizacion:canjear");
+    return await conEmpresa(empresaId, async () => await vales().consultar({ empresaId, actor, codigo }));
+  }
+
+  /**
+   * Aplica un vale a UN ítem del pedido: baja el subtotal de ese ítem (guarda lo anterior en `descuento`) y gasta el
+   * vale. Va por ítem, no por pedido, para que la cuenta dividida siga cuadrando: cada comensal paga su ítem ya
+   * rebajado. El vale se consume con una actualización atómica ANTES de tocar el ítem; si el ítem no se pudo
+   * actualizar, el vale se libera. Reglas: pedido abierto, ítem sin pagar ni anular y sin otro vale, vale activo,
+   * y si el ítem (o el pedido) tiene cliente, el vale tiene que ser de ese cliente.
+   * Límite conocido: un vale aplicado no se puede quitar; se anula el ítem (y el vale queda gastado).
+   */
+  async function aplicarVale({ empresaId, actor, code, codigo, esperaVersion }) {
+    exigir(actor, "documento:editar");
+    exigir(actor, "fidelizacion:canjear");
+    if (typeof codigo !== "string" || !codigo.trim() || codigo.length > 20)
+      throw new ErrorPedido("DATOS_INVALIDOS", "codigo: el código del vale");
+    return await conEmpresa(empresaId, async () => {
+      const item = await cargarItem(code);
+      const pedido = await cargarPedido(item.payload.doc.pedidoCode);
+      if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido de este ítem ya no está abierto");
+      if (!["en_cocina", "lista", "entregado"].includes(item.estado))
+        throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no admite un vale`);
+      if (item.payload.doc.descuento) throw new ErrorPedido("ESTADO_INVALIDO", "este ítem ya tiene un vale aplicado");
+
+      const vale = await vales().consultar({ empresaId, actor, codigo });
+      if (vale.estado !== "activo") {
+        const motivo = { usado: "el vale ya fue usado", cancelado: "el vale fue cancelado", vencido: "el vale está vencido" }[vale.estado];
+        throw new ErrorPedido("ESTADO_INVALIDO", motivo ?? "el vale no se puede usar");
+      }
+      const dueno = item.snapshot?.cliente?.clienteId ?? pedido.snapshot?.cliente?.clienteId ?? null;
+      if (dueno && String(dueno) !== vale.cliente.id)
+        throw new ErrorPedido("ESTADO_INVALIDO", "el vale es de otro cliente que el de este pedido");
+
+      const s = item.snapshot?.item ?? {};
+      const subtotal = item.payload.doc.subtotal;
+      const monto = vales().calcularDescuento(vale.beneficioCompleto, {
+        subtotal,
+        precio: s.precio ?? null,
+        cantidad: item.payload.doc.cantidad,
+        codigo: s.codigo ?? null,
+      });
+      const nuevoSubtotal = Math.round(subtotal * 100 - monto * 100) / 100;
+
+      await vales().consumir({ empresaId, actor, codigo, uso: { pedidoCode: pedido.code, itemCode: code, descuento: monto } });
+      try {
+        const d = await documentos.nuevaVersion({
+          code,
+          doc: {
+            ...item.payload.doc,
+            subtotal: nuevoSubtotal,
+            descuento: { vale: vale.codigo, beneficio: vale.beneficio.nombre, monto, subtotalAntes: subtotal },
+          },
+          usuarioId: actor.usuarioId,
+          esperaVersion: esperaVersion ?? item.version,
+        });
+        return completoItem(d);
+      } catch (e) {
+        await vales().liberar({ empresaId, actor, codigo, itemCode: code }).catch(() => {});
+        throw e;
+      }
+    });
+  }
+
   return {
     pedidos: {
       crear: crearPedido,
@@ -590,7 +754,10 @@ export function crearServicio(core) {
       cobrar,
       cobrarItems,
       anular: anularPedido,
+      cuenta: cuentaDelPedido,
+      recibos: recibosDelPedido,
     },
+    recibos: { obtener: obtenerRecibo },
     items: {
       listar: listarItems,
       obtener: obtenerItem,
@@ -599,6 +766,8 @@ export function crearServicio(core) {
       anular: (p) => mover({ ...p, a: "anulado" }),
       cambiarPrecio,
       asociarCliente: asociarClienteItem,
+      aplicarVale,
     },
+    vales: { consultar: consultarVale },
   };
 }

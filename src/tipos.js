@@ -59,3 +59,15 @@ export const TIPO_PEDIDO = Object.freeze({
   motivos: { anulado: MOTIVOS_ANULACION },
   editables: ["abierto"],
 });
+
+// RECIBO (tipo `recibo`, 5.32): el comprobante NO fiscal de un cobro (entero o por ítems). Se crea al cobrar y no
+// cambia: un solo estado, sin transiciones ni edición. Su número es el código (RC-0000001), consecutivo por empresa.
+export const TIPO_RECIBO = Object.freeze({
+  tipo: "recibo",
+  prefijo: "RC",
+  estadoInicial: "emitido",
+  transiciones: {},
+  permisos: {},
+  motivos: {},
+  editables: [],
+});

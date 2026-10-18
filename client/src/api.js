@@ -91,6 +91,14 @@ export const api = {
     cobrarItems: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar-items`, cuerpo),
     cobrar: (code, cuerpo = {}) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar`, cuerpo),
     anular: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/anular`, cuerpo),
+    // Recibos (5.32): la cuenta del pedido (consumo, no se guarda) y los recibos de pago que ya emitió
+    cuenta: (code) => pedir("GET", `restaurante/pedidos/${enc(code)}/cuenta`),
+    recibos: async (code) => (await pedir("GET", `restaurante/pedidos/${enc(code)}/recibos`)).recibos ?? [],
+  },
+
+  // Recibos de pago (RC-…): el comprobante no fiscal de un cobro
+  recibos: {
+    obtener: (code) => pedir("GET", `restaurante/recibos/${enc(code)}`),
   },
 
   // Ítems: un ítem que se mueve por las estaciones (cocina trabaja con estos)
@@ -100,6 +108,13 @@ export const api = {
     paso: (code, ruta, cuerpo = {}) => pedir("POST", `restaurante/items/${enc(code)}/${ruta}`, cuerpo),
     // A quién se le cobra el ítem: clienteId del cliente o null (vuelve al cliente del pedido)
     asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/items/${enc(code)}/cliente`, cuerpo),
+    // Vale de fidelización (5.30): se aplica a ESTE ítem y baja su subtotal; el vale se gasta
+    aplicarVale: (code, cuerpo) => pedir("POST", `restaurante/items/${enc(code)}/vale`, cuerpo),
+  },
+
+  // Vales (fidelizacion:canjear): mirar un vale por su código sin gastarlo
+  vales: {
+    consultar: (codigo) => pedir("GET", `restaurante/vales/${enc(codigo)}`),
   },
 
   // Clientes (cliente:leer / cliente:crear / cliente:cuenta): buscar por nombre, teléfono, correo o @usuario.

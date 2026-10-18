@@ -14,6 +14,9 @@ import { ErrorPedido } from "./errores.js";
  *   POST /publico/:empresa/cuenta/logout
  *   POST /publico/:empresa/cuenta/password          { passwordActual, passwordNueva }
  *   PUT  /publico/:empresa/cuenta/consentimiento    { otorgado }
+ *   GET  /publico/:empresa/cuenta/vales             { beneficios, vales }          (publico-vales.js, 5.30)
+ *   POST /publico/:empresa/cuenta/vales             { beneficioId }                canjea puntos por un vale
+ *   POST /publico/:empresa/cuenta/vales/:codigo/cancelar                           devuelve los puntos
  *
  * Solo lectura (GET), así que no necesitan `x-requested-with`. Como no hay sesión que limite el abuso, llevan
  * un límite de frecuencia por IP, en memoria (como los de auth: se reinicia con el servidor y no se comparte
@@ -55,7 +58,7 @@ export function paginaCatalogo(html, baseUrl) {
   return html.replace("<head>", `<head>\n    <base href="${escaparAttr(base)}" />`);
 }
 
-export function montarRutasPublicas(router, publico, htmlCatalogo, limitador = limitadorPorIp(), cuentas = null) {
+export function montarRutasPublicas(router, publico, htmlCatalogo, limitador = limitadorPorIp(), cuentas = null, vales = null) {
   const envolver = (fn) => async (req, res, next) => {
     try {
       await fn(req, res);
@@ -96,5 +99,12 @@ export function montarRutasPublicas(router, publico, htmlCatalogo, limitador = l
     router.post("/publico/:empresa/cuenta/logout", limitador, cuentas.logout);
     router.post("/publico/:empresa/cuenta/password", limitador, cuentas.password);
     router.put("/publico/:empresa/cuenta/consentimiento", limitador, cuentas.consentimiento);
+  }
+
+  // Vales del cliente (5.30): la sesión del cliente es la que dice de quién son.
+  if (vales) {
+    router.get("/publico/:empresa/cuenta/vales", limitador, vales.sesion, vales.listar);
+    router.post("/publico/:empresa/cuenta/vales", limitador, vales.sesion, vales.emitir);
+    router.post("/publico/:empresa/cuenta/vales/:codigo/cancelar", limitador, vales.sesion, vales.cancelar);
   }
 }

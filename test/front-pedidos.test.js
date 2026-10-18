@@ -9,6 +9,7 @@ import { cuerpoPrecio,
   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
   accionesItem, accionesPedido, resumenItems, itemsDeCocina, haceCuanto, puedeMarcarListos,
+  normalizarCodigoVale, puedeAplicarVale, textoDescuento, resumenVale,
   etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos, gruposPorCliente,
 } from "../client/src/pedidos.js";
 
@@ -328,4 +329,31 @@ test("cuenta dividida: acciones del ítem, resumen y grupos por cliente", () => 
 test("textoPuntos con varios clientes dice uno por uno", () => {
   const t = textoPuntos({ acumulados: 13, saldo: null, clientes: [{ nombre: "Ana", acumulados: 13 }, { nombre: "Beto", acumulados: 0, motivo: "sin_consentimiento" }] });
   assert.match(t, /Ana ganó 13 puntos · Beto no aceptó el programa/);
+});
+
+test("normalizarCodigoVale acepta minúsculas, espacios y guiones, y rechaza lo que no puede existir", () => {
+  assert.equal(normalizarCodigoVale(" k7m-2qx "), "K7M2QX");
+  assert.equal(normalizarCodigoVale("K7M 2QX"), "K7M2QX");
+  for (const malo of ["K7M2Q", "K7M2QXX", "K7M2Q0", "K7M2QI", "", null, undefined]) assert.equal(normalizarCodigoVale(malo), null, String(malo));
+});
+
+test("puedeAplicarVale: pide editar y canjear, un ítem vivo y sin otro vale", () => {
+  const P = ["documento:editar", "fidelizacion:canjear"];
+  for (const estado of ["en_cocina", "lista", "entregado"]) assert.equal(puedeAplicarVale({ estado }, P), true, estado);
+  for (const estado of ["pagado", "anulado"]) assert.equal(puedeAplicarVale({ estado }, P), false, estado);
+  assert.equal(puedeAplicarVale({ estado: "lista", descuento: { vale: "K7M2QX" } }, P), false);
+  assert.equal(puedeAplicarVale({ estado: "lista" }, ["documento:editar"]), false);
+  assert.equal(puedeAplicarVale({ estado: "lista" }, ["fidelizacion:canjear"]), false);
+  assert.equal(puedeAplicarVale({ estado: "lista" }, ["*"]), true);
+});
+
+test("textoDescuento y resumenVale", () => {
+  assert.equal(textoDescuento({ descuento: null }, "PEN"), null);
+  const t = textoDescuento({ descuento: { vale: "K7M2QX", monto: 6.5, beneficio: "Café gratis", subtotalAntes: 13 } });
+  assert.equal(t, "Vale K7M2QX: −6.50 (Café gratis) · antes 13.00");
+  assert.equal(resumenVale(null), null);
+  const r = resumenVale({ estado: "activo", beneficio: { nombre: "Café gratis", texto: "Un CAFE gratis" }, cliente: { nombre: "Ana" }, venceTs: "2026-11-01" });
+  assert.deepEqual([r.sirve, r.titulo, r.cliente, r.estado], [true, "Café gratis", "Ana", "Activo"]);
+  assert.equal(resumenVale({ estado: "usado", beneficio: {}, cliente: {} }).sirve, false);
+  assert.equal(resumenVale({ estado: "vencido", beneficio: {}, cliente: {} }).estado, "Vencido");
 });

@@ -412,3 +412,48 @@ export function textoPuntos(puntos) {
   const m = porque(puntos.motivo, quien);
   return m ? `${m[0].toUpperCase()}${m.slice(1)}.` : null;
 }
+
+// ---------- vales de fidelización (5.30) ----------
+
+// Mismo alfabeto que el núcleo (core/src/fidelizacion/beneficios.js): sin I, L, O, 0 ni 1. El servidor valida de
+// nuevo; esto solo evita pedir un código que no puede existir y acepta «k7m-2qx» como «K7M2QX».
+const CODIGO_VALE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+
+export function normalizarCodigoVale(texto) {
+  const t = String(texto ?? "").toUpperCase().replace(/[\s-]+/g, "");
+  return CODIGO_VALE.test(t) ? t : null;
+}
+
+/** ¿Se puede aplicar un vale a este ítem? Quien edita pedidos y canjea; ítem vivo y sin otro vale. Ocultar no es seguridad. */
+export function puedeAplicarVale(item, permisos) {
+  return (
+    permite(permisos, "documento:editar") &&
+    permite(permisos, "fidelizacion:canjear") &&
+    ["en_cocina", "lista", "entregado"].includes(item?.estado) &&
+    !item?.descuento
+  );
+}
+
+/** «Vale K7M2QX: −6,50 (Café gratis) · antes 13,00», o null si el ítem no tiene vale. */
+export function textoDescuento(item, moneda) {
+  const d = item?.descuento;
+  if (!d) return null;
+  return `Vale ${d.vale}: −${formatoDinero(d.monto, moneda)} (${d.beneficio}) · antes ${formatoDinero(d.subtotalAntes, moneda)}`;
+}
+
+const ESTADOS_VALE = { activo: "Activo", usado: "Ya usado", cancelado: "Cancelado", vencido: "Vencido" };
+export const estadoVale = (e) => ESTADOS_VALE[e] ?? e;
+
+/** Lo que el mesero ve al revisar un vale: de quién es, qué da y si sirve todavía. */
+export function resumenVale(v) {
+  if (!v) return null;
+  const sirve = v.estado === "activo";
+  return {
+    sirve,
+    titulo: v.beneficio?.nombre ?? "",
+    detalle: v.beneficio?.texto ?? "",
+    cliente: v.cliente?.nombre || "cliente sin nombre",
+    estado: estadoVale(v.estado),
+    vence: v.venceTs ?? null,
+  };
+}
