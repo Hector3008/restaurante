@@ -57,6 +57,27 @@ const sumar = (cs) => (cs.some((c) => c === null) ? null : cs.reduce((n, c) => n
 const subtotalC = (i) => (typeof i.subtotal === "number" ? centavos(i.subtotal) : null);
 const montoDescuento = (i) => (i.descuento ? centavos(Number(i.descuento.monto) || 0) : 0);
 
+const texto = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+/**
+ * El encabezado de un recibo o una cuenta (5.34): nombre, razón social, identificación fiscal, dirección, teléfono, pie y
+ * logo de la empresa. En un recibo de pago es una COPIA de lo que decía al emitirse (no cambia si la empresa luego cambia
+ * sus datos); en la cuenta son los datos de ahora. Los recibos anteriores a 5.34 solo traen el nombre.
+ */
+export function emisor(e) {
+  if (!e || typeof e !== "object") return null;
+  return {
+    nombre: typeof e.nombre === "string" ? e.nombre : "",
+    razonSocial: texto(e.razonSocial),
+    idFiscal: texto(e.idFiscal),
+    etiquetaIdFiscal: e.etiquetaIdFiscal === "ID fiscal" ? "ID fiscal" : "RUC",
+    direccion: texto(e.direccion),
+    telefono: texto(e.telefono),
+    pie: texto(e.pie),
+    logo: texto(e.logo),
+  };
+}
+
 /** Los ítems de un recibo o de una cuenta: lo que el cliente ve en cada renglón. */
 const linea = (i) => ({
   itemCode: i.code,
@@ -89,7 +110,7 @@ export function armarRecibo({ pedido, items, pago = SIN_PAGO, empresa = null, mo
     mesa: pedido.mesa ?? null,
     referencia: pedido.referencia ?? null,
     moneda: moneda ?? pedido.moneda ?? null,
-    empresa: empresa ? { nombre: empresa.nombre ?? "" } : null,
+    empresa: emisor(empresa),
     lineas: items.map(linea),
     clientes: clientesDe(items),
     subtotal: venta === null ? null : dinero(venta),
@@ -115,7 +136,7 @@ export function reciboDto(d) {
     mesa: x.mesa ?? null,
     referencia: x.referencia ?? null,
     moneda: x.moneda ?? null,
-    empresa: x.empresa ?? null,
+    empresa: emisor(x.empresa),
     lineas: x.lineas ?? [],
     clientes: x.clientes ?? [],
     subtotal: x.subtotal ?? null,
@@ -146,7 +167,7 @@ export function armarCuenta({ pedido, recibos = [], empresa = null }) {
     mesa: pedido.mesa ?? null,
     referencia: pedido.referencia ?? null,
     moneda: pedido.moneda ?? null,
-    empresa: empresa ? { nombre: empresa.nombre ?? "" } : null,
+    empresa: emisor(empresa),
     cliente: pedido.cliente ?? null,
     emitidoTs: pedido.creadoTs ?? null,
     lineas: vivos.map((i) => ({ ...linea(i), estado: i.estado, pagado: i.estado === "pagado" })),

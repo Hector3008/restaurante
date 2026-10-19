@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
 import { formatoDinero } from "./pedidos.js";
-import { formatoFechaHora, notaRecibo, textoDescuentoLinea, tituloRecibo } from "./recibos.js";
+import { encabezadoRecibo, formatoFechaHora, notaRecibo, textoDescuentoLinea, tituloRecibo } from "./recibos.js";
 
 const destino = (r) => {
   if (r.canal === "salon") return r.mesa ? `Mesa ${r.mesa}` : "Salón";
@@ -15,11 +15,13 @@ const destino = (r) => {
 export default function Recibo({ codigo, pedido, alCerrar }) {
   const [r, setR] = useState(null);
   const [error, setError] = useState("");
+  const [logoRoto, setLogoRoto] = useState(false);
 
   useEffect(() => {
     let vigente = true;
     setR(null);
     setError("");
+    setLogoRoto(false);
     (codigo ? api.recibos.obtener(codigo) : api.pedidos.cuenta(pedido))
       .then((d) => vigente && setR(d))
       .catch((e) => vigente && setError(mensajeDeError(e)));
@@ -39,10 +41,13 @@ export default function Recibo({ codigo, pedido, alCerrar }) {
 
   const $ = (v) => formatoDinero(v, r.moneda);
   const pago = r.tipo === "pago";
+  const enc = encabezadoRecibo(r);
   return (
     <section className="rs-recibo-caja" aria-label={tituloRecibo(r)}>
       <article className="rs-recibo">
-        {r.empresa?.nombre && <h2 className="rs-recibo__empresa">{r.empresa.nombre}</h2>}
+        {enc.logo && !logoRoto && <img className="rs-recibo__logo" src={enc.logo} alt={`Logo de ${enc.nombre}`} referrerPolicy="no-referrer" onError={() => setLogoRoto(true)} />}
+        {enc.nombre && <h2 className="rs-recibo__empresa">{enc.nombre}</h2>}
+        {enc.lineas.length > 0 && <p className="rs-recibo__datos">{enc.lineas.map((l, i) => (<span key={i}>{l}</span>))}</p>}
         <p className="rs-recibo__titulo">{tituloRecibo(r)}{pago && <> · <strong>{r.code}</strong></>}</p>
         <p className="rs-recibo__meta">
           {formatoFechaHora(r.emitidoTs)}
@@ -90,6 +95,7 @@ export default function Recibo({ codigo, pedido, alCerrar }) {
             Pagos: {r.pagos.map((p) => `${p.code}${p.metodoTexto ? ` (${p.metodoTexto})` : ""}`).join(", ")}
           </p>
         )}
+        {enc.pie && <p className="rs-recibo__pie">{enc.pie}</p>}
         <p className="rs-recibo__nota">{notaRecibo(r)}</p>
       </article>
       <div className="rs-acciones rs-recibo__acciones">

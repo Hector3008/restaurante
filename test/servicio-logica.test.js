@@ -1001,6 +1001,28 @@ describe("recibos y cuenta (núcleo falso)", () => {
     assert.deepEqual(r.recibo.lineas[0].descuento, { vale: "K7M2QX", beneficio: "Café gratis", monto: 6.5 });
   });
 
+  it("el recibo guarda el logo y los datos de la empresa de ese momento; la cuenta, los de ahora (5.34)", async () => {
+    nuevo();
+    const empresa = { _id: E, nombre: "Café Central", pais: "PE", datos: { razonSocial: "Café Central SAC", idFiscal: "20123456789", direccion: "Av. 1", pie: "Gracias" }, marca: { logo: "https://e.com/l.png" } };
+    core.modelos = { Empresa: { findById: () => ({ lean: async () => structuredClone(empresa) }) } };
+    const c = await mesa();
+    const r = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I1], pago: { metodo: "yape" } }));
+    assert.deepEqual(r.recibo.empresa, { nombre: "Café Central", razonSocial: "Café Central SAC", idFiscal: "20123456789", etiquetaIdFiscal: "RUC", direccion: "Av. 1", telefono: null, pie: "Gracias", logo: "https://e.com/l.png" });
+    // la empresa cambia sus datos y su logo: el recibo ya emitido no cambia, la cuenta sí
+    empresa.datos.direccion = "Av. Nueva 99";
+    empresa.marca.logo = "https://e.com/otro.png";
+    const viejo = await svc.recibos.obtener(m(SOLO_LEER, r.recibo.code));
+    assert.equal(viejo.empresa.direccion, "Av. 1");
+    assert.equal(viejo.empresa.logo, "https://e.com/l.png");
+    const cuenta = await svc.pedidos.cuenta(m(SOLO_LEER, c.code));
+    assert.equal(cuenta.empresa.direccion, "Av. Nueva 99");
+    assert.equal(cuenta.empresa.logo, "https://e.com/otro.png");
+    // un logo que no es https no llega al recibo
+    empresa.marca.logo = "javascript:alert(1)";
+    const r2 = await svc.pedidos.cobrarItems(m(CAJERO, c.code, { items: [I2] }));
+    assert.equal(r2.recibo.empresa.logo, null);
+  });
+
   it("la cuenta muestra lo consumido, lo cobrado y lo que falta, sin lo anulado, y no se guarda", async () => {
     nuevo();
     const c = await mesa();

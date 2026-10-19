@@ -62,3 +62,25 @@ export function avisoRecibo(respuesta) {
   if (respuesta?.reciboError) return { error: true };
   return null;
 }
+
+/**
+ * El encabezado impreso de un recibo o de una cuenta (5.34), línea por línea y sin las vacías.
+ * La razón social solo se repite si es distinta del nombre comercial. Los recibos anteriores solo traen el nombre.
+ */
+export function encabezadoRecibo(r) {
+  const e = r?.empresa;
+  if (!e) return { nombre: "", lineas: [], pie: null, logo: null };
+  const lineas = [];
+  if (e.razonSocial && e.razonSocial.trim().toLowerCase() !== String(e.nombre ?? "").trim().toLowerCase()) lineas.push(e.razonSocial);
+  if (e.idFiscal) lineas.push(`${e.etiquetaIdFiscal === "ID fiscal" ? "ID fiscal" : "RUC"}: ${e.idFiscal}`);
+  if (e.direccion) lineas.push(e.direccion);
+  if (e.telefono) lineas.push(`Tel: ${e.telefono}`);
+  let logo = null;
+  try {
+    const u = new URL(e.logo ?? "");
+    if (u.protocol === "https:" && !u.username && !u.password) logo = u.href;
+  } catch {
+    logo = null;
+  }
+  return { nombre: e.nombre ?? "", lineas, pie: e.pie || null, logo };
+}

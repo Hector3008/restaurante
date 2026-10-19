@@ -148,6 +148,10 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .rs-recibo-caja { margin: 12px 0; display: grid; gap: 10px; }
 .rs-recibo { max-width: 22rem; margin: 0 auto; width: 100%; padding: 16px; background: #fff; color: #111; border: 1px solid var(--color-borde); border-radius: 6px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .875rem; }
 .rs-recibo__empresa { margin: 0 0 4px; text-align: center; font-size: 1.1rem; }
+.rs-recibo__logo { display: block; max-width: 9rem; max-height: 4.5rem; width: auto; height: auto; object-fit: contain; margin: 0 auto 8px; }
+.rs-recibo__datos { margin: 0 0 8px; text-align: center; color: #444; font-size: .8125rem; }
+.rs-recibo__datos span { display: block; }
+.rs-recibo__pie { margin: 8px 0 0; text-align: center; font-size: .8125rem; }
 .rs-recibo__titulo { margin: 0 0 8px; text-align: center; text-transform: uppercase; letter-spacing: .04em; }
 .rs-recibo__meta { margin: 0 0 8px; color: #444; }
 .rs-recibo__lineas { width: 100%; border-collapse: collapse; margin: 8px 0; border-top: 1px dashed #888; border-bottom: 1px dashed #888; }
@@ -164,5 +168,7 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
   body * { visibility: hidden !important; }
   .rs-recibo, .rs-recibo * { visibility: visible !important; }
   .rs-recibo { position: absolute; left: 0; top: 0; width: 80mm; max-width: 80mm; margin: 0; padding: 4mm; border: 0; border-radius: 0; background: #fff !important; color: #000 !important; }
-  .rs-recibo__meta, .rs-recibo__desc, .rs-recibo__nota { color: #000 !important; }
+  .rs-recibo__meta, .rs-recibo__desc, .rs-recibo__nota, .rs-recibo__datos { color: #000 !important; }
+  /* el logo se imprime en blanco y negro con buen contraste: sirve en una impresora térmica de 80 mm */
+  .rs-recibo__logo { max-height: 18mm; max-width: 40mm; filter: grayscale(1) contrast(1.4); }
 }

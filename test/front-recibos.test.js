@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { METODOS_PAGO, PAGO_INICIAL, avisoRecibo, cuerpoPago, formatoFechaHora, notaRecibo, textoDescuentoLinea, tituloRecibo, validarPagoForm } from "../client/src/recibos.js";
+import { METODOS_PAGO, PAGO_INICIAL, avisoRecibo, encabezadoRecibo, cuerpoPago, formatoFechaHora, notaRecibo, textoDescuentoLinea, tituloRecibo, validarPagoForm } from "../client/src/recibos.js";
 
 test("formulario de pago: sin forma de pago no hay propina ni efectivo; con ella se valida", () => {
   assert.equal(validarPagoForm(PAGO_INICIAL), null);
@@ -43,4 +43,16 @@ test("avisoRecibo: el recibo emitido, el error o nada", () => {
   assert.deepEqual(avisoRecibo({ reciboError: true }), { error: true });
   assert.equal(avisoRecibo({}), null);
   assert.equal(avisoRecibo(undefined), null);
+});
+
+test("encabezadoRecibo: nombre, líneas sin vacíos, razón social solo si es distinta, pie y logo https", () => {
+  const e = { nombre: "Café Central", razonSocial: "Café Central SAC", idFiscal: "20123456789", etiquetaIdFiscal: "RUC", direccion: "Av. 1", telefono: "999 111", pie: "Gracias", logo: "https://e.com/l.png" };
+  assert.deepEqual(encabezadoRecibo({ empresa: e }), { nombre: "Café Central", lineas: ["Café Central SAC", "RUC: 20123456789", "Av. 1", "Tel: 999 111"], pie: "Gracias", logo: "https://e.com/l.png" });
+  // misma razón social que el nombre: no se repite; otro país: «ID fiscal»
+  assert.deepEqual(encabezadoRecibo({ empresa: { ...e, razonSocial: " café central ", etiquetaIdFiscal: "ID fiscal", direccion: null, telefono: null } }).lineas, ["ID fiscal: 20123456789"]);
+  // un recibo anterior (solo con el nombre) y la ausencia de empresa no rompen
+  assert.deepEqual(encabezadoRecibo({ empresa: { nombre: "Café" } }), { nombre: "Café", lineas: [], pie: null, logo: null });
+  assert.deepEqual(encabezadoRecibo({}), { nombre: "", lineas: [], pie: null, logo: null });
+  assert.deepEqual(encabezadoRecibo(null), { nombre: "", lineas: [], pie: null, logo: null });
+  for (const logo of ["http://e.com/l.png", "javascript:alert(1)", "/l.png", "https://u:p@e.com/l.png", null]) assert.equal(encabezadoRecibo({ empresa: { ...e, logo } }).logo, null, String(logo));
 });

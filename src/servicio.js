@@ -1,4 +1,4 @@
-import { conEmpresa, permite, ErrorDocumento } from "core";
+import { conEmpresa, permite, ErrorDocumento, emisorDe } from "core";
 import { ErrorPedido } from "./errores.js";
 import {
   validarCode,
@@ -335,9 +335,11 @@ export function crearServicio(core) {
     return t === null ? null : Math.round(t * 100);
   };
 
+  // El encabezado de los recibos (5.34): nombre, datos y logo de la empresa en este momento; null si no se puede leer.
   async function empresaDe(empresaId) {
     try {
-      return (await core.modelos?.Empresa?.findById(empresaId).lean()) ?? null;
+      const e = (await core.modelos?.Empresa?.findById(empresaId).lean()) ?? null;
+      return e ? emisorDe(e) : null;
     } catch {
       return null;
     }

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { ErrorPedido } from "../src/errores.js";
-import { METODOS_PAGO, armarCuenta, armarRecibo, reciboDto, validarPago } from "../src/recibo.js";
+import { METODOS_PAGO, armarCuenta, armarRecibo, emisor, reciboDto, validarPago } from "../src/recibo.js";
 
 const malo = (fn, re) => assert.throws(fn, (e) => e instanceof ErrorPedido && e.codigo === "DATOS_INVALIDOS" && (!re || re.test(e.message)));
 const item = (code, nombre, cantidad, precio, extra = {}) => ({ code, nombre, codigo: nombre.toUpperCase(), cantidad, precio, subtotal: cantidad * precio, descuento: null, cliente: null, estado: "pagado", ...extra });
@@ -44,7 +44,7 @@ describe("armarRecibo", () => {
   it("suma en centavos, agrega la propina y calcula el vuelto", () => {
     const r = armarRecibo({ pedido, items, pago: { metodo: "efectivo", propina: 1.1, recibido: 20 }, empresa: { nombre: "Café Central", slug: "x" } });
     assert.deepEqual([r.subtotal, r.propina, r.total, r.recibido, r.vuelto, r.descuentos], [18, 1.1, 19.1, 20, 0.9, 0]);
-    assert.deepEqual(r.empresa, { nombre: "Café Central" });
+    assert.deepEqual(r.empresa, { nombre: "Café Central", razonSocial: null, idFiscal: null, etiquetaIdFiscal: "RUC", direccion: null, telefono: null, pie: null, logo: null });
     assert.equal(r.pedidoCode, "PD-0000001");
     assert.equal(r.moneda, "PEN");
     assert.deepEqual(r.lineas[0], { itemCode: "DOC_ITEM-1", nombre: "Café", codigo: "CAFÉ", cantidad: 2, precio: 6.5, subtotal: 13, descuento: null });
@@ -92,5 +92,26 @@ describe("armarCuenta", () => {
     const c = armarCuenta({ pedido: { ...pedido, items: [] } });
     assert.deepEqual([c.total, c.cobrado, c.porCobrar, c.lineas, c.pagos, c.empresa], [0, 0, 0, [], [], null]);
     assert.equal(armarCuenta({ pedido }).total, 0);
+  });
+});
+
+describe("encabezado del recibo (5.34)", () => {
+  it("emisor deja solo los campos del encabezado, con texto o null", () => {
+    const e = emisor({ nombre: "Café Central", razonSocial: " Café Central SAC ", idFiscal: "20123456789", etiquetaIdFiscal: "RUC", direccion: "Calle 1", telefono: "999", pie: "Gracias", logo: "https://e.com/l.png", otro: "x" });
+    assert.deepEqual(e, { nombre: "Café Central", razonSocial: "Café Central SAC", idFiscal: "20123456789", etiquetaIdFiscal: "RUC", direccion: "Calle 1", telefono: "999", pie: "Gracias", logo: "https://e.com/l.png" });
+    assert.equal(emisor(null), null);
+    assert.equal(emisor("x"), null);
+    assert.deepEqual(emisor({ nombre: 5, pie: "   ", logo: 3, etiquetaIdFiscal: "otra" }), { nombre: "", razonSocial: null, idFiscal: null, etiquetaIdFiscal: "RUC", direccion: null, telefono: null, pie: null, logo: null });
+  });
+  it("el recibo guarda el encabezado que se le dio y la cuenta también", () => {
+    const empresa = { nombre: "Café Central", razonSocial: "Café Central SAC", idFiscal: "20123456789", etiquetaIdFiscal: "RUC", direccion: "Calle 1", telefono: "999", pie: "Gracias", logo: "https://e.com/l.png" };
+    const pedido = { code: "PD-1", estado: "abierto", moneda: "PEN", items: [item("I1", "Café", 1, 6, { estado: "entregado" })] };
+    assert.equal(armarRecibo({ pedido, items: pedido.items, empresa }).empresa.idFiscal, "20123456789");
+    assert.equal(armarCuenta({ pedido, empresa }).empresa.direccion, "Calle 1");
+  });
+  it("un recibo anterior a 5.34 (solo con el nombre) se lee con el resto en null", () => {
+    const d = reciboDto({ code: "RC-1", payload: { doc: { pedidoCode: "PD-1", empresa: { nombre: "Café Central" }, lineas: [] } } });
+    assert.deepEqual(d.empresa, { nombre: "Café Central", razonSocial: null, idFiscal: null, etiquetaIdFiscal: "RUC", direccion: null, telefono: null, pie: null, logo: null });
+    assert.equal(reciboDto({ code: "RC-2", payload: { doc: {} } }).empresa, null);
   });
 });
