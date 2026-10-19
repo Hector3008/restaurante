@@ -74,13 +74,32 @@ describe("servicio público: carta", () => {
 
   it("agrupa por categoría, lo sin categoría va al final y no expone atributos", async () => {
     const c = await publico.carta({ slug: "cafe-central" });
-    assert.deepEqual(c.empresa, { nombre: "Café Central", slug: "cafe-central", moneda: "PEN" });
+    assert.deepEqual(c.empresa, { nombre: "Café Central", slug: "cafe-central", moneda: "PEN", marca: null });
     assert.deepEqual(c.categorias.map((x) => x.nombre), ["Bebidas", "Postres", "Otros"]);
     assert.deepEqual(c.categorias[0].items, [
       { codigo: "CAF-1", nombre: "Café americano", precio: 6.5 },
       { codigo: "AGU-1", nombre: "Agua", precio: null },
     ]);
     assert.ok(!JSON.stringify(c).includes("INTERNO"));
+  });
+
+  it("la marca de la empresa sale ya calculada por el núcleo y sin lo que no es público", async () => {
+    const e = EMPRESAS["cafe-central"];
+    e.marca = { logo: "https://img.example.com/logo.png", eslogan: "Desde 1999", colorPrincipal: "#8B1E3F", _interno: "x" };
+    try {
+      const { empresa } = await publico.carta({ slug: "cafe-central" });
+      assert.equal(empresa.marca.logo, "https://img.example.com/logo.png");
+      assert.equal(empresa.marca.eslogan, "Desde 1999");
+      assert.equal(empresa.marca.tema, "claro");
+      assert.equal(empresa.marca.colores["--color-principal"], "#8b1e3f");
+      assert.deepEqual(Object.keys(empresa.marca).sort(), ["colores", "eslogan", "logo", "tema"]);
+      assert.ok(!JSON.stringify(empresa).includes("_interno"));
+      // un logo guardado que no es https no se publica
+      e.marca = { logo: "javascript:alert(1)", eslogan: "Hola" };
+      assert.deepEqual((await publico.carta({ slug: "cafe-central" })).empresa.marca, { logo: null, eslogan: "Hola", tema: null, colores: null });
+    } finally {
+      delete e.marca;
+    }
   });
 
   it("rechaza con el mismo 404 slug inexistente, mal formado, sin el servicio, servicio apagado o empresa dada de baja", async () => {

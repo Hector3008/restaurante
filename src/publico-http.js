@@ -4,7 +4,7 @@ import { ErrorPedido } from "./errores.js";
  * Rutas públicas del restaurante (SIN sesión): la carta de una empresa y el cliente que la mira.
  *
  *   GET /catalogo/:empresa              la página (HTML) de la carta; `:empresa` es el slug
- *   GET /publico/:empresa/carta         { empresa: { nombre, slug, moneda }, categorias: [{ nombre, items }] }
+ *   GET /publico/:empresa/carta         { empresa: { nombre, slug, moneda, marca }, categorias: [{ nombre, items }] }
  *   GET /publico/:empresa/plato/:codigo  { empresa, plato: { codigo, nombre, categoria, precio, descripcion, imagen }, resenas }
  *
  * Cuenta del cliente final (con sesión propia `cs_<slug>`; los maneja core.cuentasCliente, ver core/docs/cuentas-cliente.md):

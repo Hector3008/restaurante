@@ -1,5 +1,7 @@
 /* Vista pública de la carta. Solo variables de diseño de estilos.css (5.10), sin colores fijos. */
 .cat-cabecera { margin-bottom: 16px; }
+/* Logo de la empresa (5.33): cabe en un recuadro, sin deformarse */
+.cat-logo { display: block; max-width: 160px; max-height: 80px; width: auto; height: auto; object-fit: contain; margin-bottom: 10px; }
 .cat-puntos { background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: var(--radio); padding: 14px 16px; margin-bottom: 20px; display: grid; gap: 10px; }
 .cat-puntos__fila { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .cat-puntos__total { margin: 0; font-size: 1.0625rem; }

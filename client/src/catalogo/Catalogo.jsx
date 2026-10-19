@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import Plato from "./Plato.jsx";
 import Cuenta from "./Cuenta.jsx";
+import { aplicarPaleta, esloganDe, logoSeguro } from "./marca.js";
 import { filtrarCarta, formatoPrecio, hashPlato, rutaDesdeHash, slugDesdeUbicacion, totalItems } from "./logica.js";
 
 // Vista pública de la carta: la carta se ve sin iniciar sesión. Carta y cuenta se piden por separado: si la cuenta
@@ -52,6 +53,12 @@ export default function Catalogo() {
     if (carta?.empresa?.nombre) document.title = `Carta · ${carta.empresa.nombre}`;
   }, [carta]);
 
+  // La marca de la empresa (5.33): colores en todo el documento mientras se ve la carta; si no hay, la apariencia por defecto
+  const marca = carta?.empresa?.marca ?? null;
+  useEffect(() => aplicarPaleta(marca, document.documentElement), [marca]);
+  const [logoRoto, setLogoRoto] = useState(false);
+  const logo = logoRoto ? null : logoSeguro(marca);
+
   const visibles = useMemo(() => filtrarCarta(carta?.categorias, { texto, categoria }), [carta, texto, categoria]);
 
   if (errorCarta)
@@ -74,8 +81,9 @@ export default function Catalogo() {
   return (
     <main className="rs cat">
       <header className="cat-cabecera">
+        {logo && <img className="cat-logo" src={logo} alt={`Logo de ${empresa.nombre}`} referrerPolicy="no-referrer" onError={() => setLogoRoto(true)} />}
         <h1>{empresa.nombre}</h1>
-        <p className="rs-empresa">Nuestra carta</p>
+        <p className="rs-empresa">{esloganDe(marca) ?? "Nuestra carta"}</p>
       </header>
 
       <Cuenta slug={slug} estado={cliente} alCambiar={setCliente} />

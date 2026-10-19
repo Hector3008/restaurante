@@ -1,5 +1,5 @@
 import { ErrorPedido } from "./errores.js";
-import { ErrorCatalogo } from "core";
+import { ErrorCatalogo, marcaPublica } from "core";
 import { resenasDe } from "./resenas-demo.js";
 
 // Vista pública de la carta (sin sesión). La empresa se identifica por su `slug` (arquitectura 5.13: los pedidos
@@ -75,7 +75,8 @@ export function crearPublico(core) {
       if (pagina.length < 200) break;
     }
     return {
-      empresa: { nombre: e.nombre, slug: e.slug, moneda: e.moneda ?? "PEN" },
+      // `marca` (5.33): logo, eslogan y paleta ya calculada por el núcleo; null si la empresa no personalizó nada
+      empresa: { nombre: e.nombre, slug: e.slug, moneda: e.moneda ?? "PEN", marca: marcaPublica(e) },
       categorias: agruparPorCategoria(items),
     };
   }
