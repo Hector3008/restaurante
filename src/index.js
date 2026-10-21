@@ -2,7 +2,9 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { conEmpresa, permite } from "core";
 import { crearServicio } from "./servicio.js";
+import { crearReportes } from "./reportes.js";
 import { montarRutas } from "./http.js";
 import { crearPublico, CAMPOS_PLATO } from "./publico.js";
 import { montarRutasPublicas } from "./publico-http.js";
@@ -13,6 +15,7 @@ import { extraerConsumo } from "./fuente-puntos.js";
 export { TIPO_ITEM, TIPO_PEDIDO, TIPO_RECIBO, MOTIVOS_ANULACION } from "./tipos.js";
 export { ErrorPedido } from "./errores.js";
 export { crearServicio } from "./servicio.js";
+export { crearReportes } from "./reportes.js";
 
 const DIST_POR_DEFECTO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "client", "dist");
 
@@ -53,6 +56,10 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
     extraer: extraerConsumo,
   });
   const servicio = crearServicio(core);
+  // Reportes de ventas (5.35): agregación sobre los documentos de la empresa; permiso `reporte:leer`.
+  servicio.reportes = core.modelos?.Documento
+    ? crearReportes({ conEmpresa, permite, modelos: core.modelos })
+    : null;
 
   const router = express.Router();
   router.use(express.json());

@@ -50,12 +50,16 @@ function responder(res, e, next) {
  *   GET  /pedidos/:code/recibos                         documento:leer   { recibos } de pago emitidos en ese pedido
  *   GET  /recibos/:code                                 documento:leer   un recibo de pago (RC-…)
  *
+ * Reportes (5.35)
+ *   GET  /reportes/ventas (?desde=AAAA-MM-DD &hasta= &dias=N &gran=dia|semana|mes)   reporte:leer   ventas cobradas (ítems pagados) resumidas
+ *        por tiempo, categoría, mesero (quien cobra), cliente, plato, hora y canal, más propinas y formas de pago (recibos)
+ *
  * Vales (5.30)
  *   GET  /vales/:codigo                                 fidelizacion:canjear   el vale, su beneficio y su cliente (no lo gasta)
  */
 export function montarRutas(router, core, servicio) {
   const { autenticar, requierePermiso, eventos, auth } = core;
-  const { pedidos, items, vales, recibos } = servicio;
+  const { pedidos, items, vales, recibos, reportes } = servicio;
 
   const envolver = (escribe, fn) => async (req, res, next) => {
     try {
@@ -166,6 +170,20 @@ export function montarRutas(router, core, servicio) {
     ...leer,
     envolver(false, async (req, res) => res.status(200).json(await recibos.obtener({ ...base(req), code: req.params.code }))),
   );
+
+  // ---------- reportes (5.35) ----------
+  // Solo con `reporte:leer` (el administrador lo tiene por `*`; ninguna plantilla de rol lo trae). Son lecturas: no
+  // piden `x-requested-with`. La estación del contexto de eventos es la de administración.
+  if (reportes)
+    router.get(
+      "/reportes/ventas",
+      ...con("reporte:leer", "administracion"),
+      envolver(false, async (req, res) => {
+        res.setHeader("Cache-Control", "no-store");
+        const { desde, hasta, dias, gran } = req.query ?? {};
+        res.status(200).json(await reportes.ventas({ ...base(req), desde, hasta, dias, gran }));
+      }),
+    );
 
   // ---------- ítems (ítems) ----------
   router.get(
