@@ -17,7 +17,7 @@ export const TIPO_RECIBO = "recibo";
 const ESTADOS_ITEM_ACTIVOS = ["en_cocina", "lista", "entregado", "pagado"];
 
 /**
- * Servicio del restaurante: dos cosas separadas (ver tipos.js).
+ * Servicio de tobt: dos cosas separadas (ver tipos.js).
  *
  *   `items`  cada ítem que se pide es un documento propio que se mueve por las estaciones (cocina ve estos).
  *   `pedidos`  agrupa los ítems de una mesa o persona, desde el primero hasta que se paga todo.
@@ -373,7 +373,7 @@ export function crearServicio(core) {
       await vincularRecibo({ actor, pedidoCode, reciboCode: creado.code });
       return { recibo: reciboDto(creado) };
     } catch (e) {
-      console.error(`restaurante: no se pudo emitir el recibo del pedido ${pedidoCode}`, e);
+      console.error(`tobt: no se pudo emitir el recibo del pedido ${pedidoCode}`, e);
       return { reciboError: true };
     }
   }

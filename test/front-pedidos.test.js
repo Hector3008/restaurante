@@ -14,10 +14,10 @@ import { cuerpoPrecio,
 } from "../client/src/pedidos.js";
 
 // api.js calcula la ruta base con document.baseURI al importarse: se simula antes de cargarlo.
-globalThis.document ??= { baseURI: "http://localhost/restaurante/" };
+globalThis.document ??= { baseURI: "http://localhost/tobt/" };
 const { ErrorApi, mensajeDeError, normalizarYo, urlCuenta, urlCarta } = await import("../client/src/api.js");
 
-// Roles de la plantilla `restaurante` del núcleo (core/src/modelos/plantillas.js)
+// Roles de la plantilla `tobt` del núcleo (core/src/modelos/plantillas.js)
 const MESERO = ["estacion:creacion", "estacion:carta", "documento:crear", "documento:leer", "documento:editar", "catalogo:leer", "cliente:leer", "cliente:crear", "cliente:cuenta", "fidelizacion:canjear"];
 const COCINA = ["estacion:cocina", "documento:leer", "documento:editar"];
 const CAJERO = [...MESERO, "estacion:administracion"];
@@ -237,8 +237,8 @@ test("normalizarYo toma permisos y empresa activa de /auth/yo", () => {
 test("normalizarYo y urlCarta: el slug de la empresa activa lleva a su carta pública", () => {
   const yo = normalizarYo({ empresaActivaId: "e2", empresas: [{ id: "e1", nombre: "Otra", slug: "otra" }, { id: "e2", nombre: "Café de prueba", slug: "cafe-prueba", rol: "admin" }] });
   assert.equal(yo.empresa.slug, "cafe-prueba");
-  assert.equal(urlCarta(yo.empresa.slug), "/restaurante/catalogo/cafe-prueba");
-  assert.equal(urlCarta("a b"), "/restaurante/catalogo/a%20b");
+  assert.equal(urlCarta(yo.empresa.slug), "/tobt/catalogo/cafe-prueba");
+  assert.equal(urlCarta("a b"), "/tobt/catalogo/a%20b");
 });
 
 test("mensajeDeError: usa el texto del servicio y trata aparte sesión, conflicto y red", () => {

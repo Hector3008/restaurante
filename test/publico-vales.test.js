@@ -39,9 +39,9 @@ describe("vales del cliente (rutas públicas)", () => {
     const publico = { empresaDe: async (req) => ({ id: "e1", slug: req.params.empresa }) };
     montarRutasPublicas(router, publico, "<html><head></head></html>", (req, res, next) => next(), null, crearManejadoresVales(core, publico.empresaDe));
     const app = express();
-    app.use("/restaurante", router);
+    app.use("/tobt", router);
     await new Promise((r) => (server = app.listen(0, r)));
-    url = `http://127.0.0.1:${server.address().port}/restaurante/publico/cafe/cuenta/vales`;
+    url = `http://127.0.0.1:${server.address().port}/tobt/publico/cafe/cuenta/vales`;
   });
   after(() => server.close());
 

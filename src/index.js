@@ -22,17 +22,17 @@ const DIST_POR_DEFECTO = path.join(path.dirname(fileURLToPath(import.meta.url)),
 /**
  * Punto de entrada del servicio. El gateway lo monta así (misma forma que microservicio-prueba-):
  *
- *   import { createRouter } from "restaurante";
- *   gateway.use("/restaurante", createRouter({ core }));
+ *   import { createRouter } from "tobt";
+ *   gateway.use("/tobt", createRouter({ core }));
  *
  * Registra los tipos de documento `doc_item` y `pedido` al montarse (idempotente). No abre conexiones: usa el núcleo
  * del gateway. `db` se acepta por compatibilidad con los demás servicios y hoy no se usa.
  *
  * Además de la API (/pedidos y /items), sirve el front compilado (client/dist, commiteado) en la raíz del montaje:
- * `<base>/restaurante/`. El front pide la API en relativo (`../restaurante/pedidos`), así que debe
- * montarse en `<base>/restaurante/`, igual que `cuenta`.
+ * `<base>/tobt/`. El front pide la API en relativo (`../tobt/pedidos`), así que debe
+ * montarse en `<base>/tobt/`, igual que `cuenta`.
  *
- * Y la vista pública de la carta, sin sesión: `<base>/restaurante/catalogo/<slug-de-la-empresa>` (publico-http.js).
+ * Y la vista pública de la carta, sin sesión: `<base>/tobt/catalogo/<slug-de-la-empresa>` (publico-http.js).
  */
 export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
   if (!core?.documentos || !core?.catalogo || !core?.clientes)
@@ -40,7 +40,7 @@ export function createRouter({ core, dist = DIST_POR_DEFECTO } = {}) {
   for (const archivo of ["index.html", "catalogo.html"])
     if (!fs.existsSync(path.join(dist, archivo)))
       throw new Error(
-        `restaurante: no existe ${path.join(dist, archivo)}. Ejecuta "npm run build" y commitea client/dist.`,
+        `tobt: no existe ${path.join(dist, archivo)}. Ejecuta "npm run build" y commitea client/dist.`,
       );
 
   core.documentos.registrarTipo(TIPO_ITEM);

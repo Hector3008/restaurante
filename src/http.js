@@ -18,7 +18,7 @@ function responder(res, e, next) {
 }
 
 /**
- * Rutas del restaurante. Cada una sale con sus middlewares en orden
+ * Rutas de tobt. Cada una sale con sus middlewares en orden
  * (autenticar → requierePermiso → estación del contexto de eventos → handler), así no se puede
  * olvidar ninguno. La estación la fija la ruta, nunca el cliente (arquitectura 5.4).
  *

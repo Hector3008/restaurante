@@ -1,7 +1,7 @@
 {
-  "name": "restaurante",
+  "name": "tobt",
   "version": "0.1.0",
-  "description": "Servicio restaurante: pedidos sobre la base común (core)",
+  "description": "Servicio tobt: pedidos sobre la base común (core)",
   "main": "src/index.js",
   "type": "module",
   "engines": {

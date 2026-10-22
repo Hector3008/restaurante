@@ -12,10 +12,10 @@ import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPun
 const middleware = () => (req, res, next) => next();
 
 const EMPRESAS = {
-  "cafe-central": { _id: "e1", nombre: "Café Central", slug: "cafe-central", moneda: "PEN", activa: true, servicios: [{ codigo: "restaurante", activa: true }] },
+  "cafe-central": { _id: "e1", nombre: "Café Central", slug: "cafe-central", moneda: "PEN", activa: true, servicios: [{ codigo: "tobt", activa: true }] },
   "sin-servicio": { _id: "e2", nombre: "Otra", slug: "sin-servicio", activa: true, servicios: [{ codigo: "siscore", activa: true }] },
-  "servicio-off": { _id: "e3", nombre: "Off", slug: "servicio-off", activa: true, servicios: [{ codigo: "restaurante", activa: false }] },
-  "empresa-baja": { _id: "e4", nombre: "Baja", slug: "empresa-baja", activa: false, servicios: [{ codigo: "restaurante", activa: true }] },
+  "servicio-off": { _id: "e3", nombre: "Off", slug: "servicio-off", activa: true, servicios: [{ codigo: "tobt", activa: false }] },
+  "empresa-baja": { _id: "e4", nombre: "Baja", slug: "empresa-baja", activa: false, servicios: [{ codigo: "tobt", activa: true }] },
 };
 const CATALOGO = [
   { id: "1", codigo: "CAF-1", nombre: "Café americano", categoria: "Bebidas", precio: 6.5, atributos: { INTERNO: "x", DESCRIPCION: "  Espresso doble alargado.  ", IMAGEN: "https://img.example.com/cafe.jpg" } },
@@ -176,9 +176,9 @@ describe("rutas públicas por HTTP", () => {
   before(async () => {
     nucleo = nucleoFalso();
     const app = express();
-    app.use("/base/restaurante", createRouter({ core: nucleo }));
+    app.use("/base/tobt", createRouter({ core: nucleo }));
     await new Promise((r) => (server = app.listen(0, r)));
-    url = `http://127.0.0.1:${server.address().port}/base/restaurante`;
+    url = `http://127.0.0.1:${server.address().port}/base/tobt`;
   });
   after(() => server.close());
 
@@ -188,7 +188,7 @@ describe("rutas públicas por HTTP", () => {
     assert.match(r.headers.get("content-type"), /html/);
     assert.match(r.headers.get("cache-control"), /no-cache/);
     const html = await r.text();
-    assert.match(html, /<base href="\/base\/restaurante\/" \/>/);
+    assert.match(html, /<base href="\/base\/tobt\/" \/>/);
     assert.match(html, /id="raiz"/);
     assert.match(html, /assets\/catalogo-[^"]+\.js/);
     assert.ok(html.indexOf("<base") < html.indexOf("<script"), "<base> va antes de cualquier recurso");
@@ -292,12 +292,12 @@ test("paginaCatalogo escapa la base y no duplica la barra final", () => {
 
 describe("lógica del front de la carta", () => {
   it("slugDesdeUbicacion: ruta normal, con barra final, codificada y por query en desarrollo", () => {
-    assert.equal(slugDesdeUbicacion("/restaurante/catalogo/cafe-central"), "cafe-central");
-    assert.equal(slugDesdeUbicacion("/base/restaurante/catalogo/cafe-central/"), "cafe-central");
-    assert.equal(slugDesdeUbicacion("/restaurante/catalogo/caf%C3%A9"), "café");
+    assert.equal(slugDesdeUbicacion("/tobt/catalogo/cafe-central"), "cafe-central");
+    assert.equal(slugDesdeUbicacion("/base/tobt/catalogo/cafe-central/"), "cafe-central");
+    assert.equal(slugDesdeUbicacion("/tobt/catalogo/caf%C3%A9"), "café");
     assert.equal(slugDesdeUbicacion("/catalogo.html", "?empresa=mi-local"), "mi-local");
     assert.equal(slugDesdeUbicacion("/catalogo.html", ""), null);
-    assert.equal(slugDesdeUbicacion("/restaurante/catalogo/%E0%A4%A"), null);
+    assert.equal(slugDesdeUbicacion("/tobt/catalogo/%E0%A4%A"), null);
   });
   it("formatoPrecio: moneda, sin precio y moneda inválida", () => {
     assert.equal(formatoPrecio(null, "PEN"), "Consultar");

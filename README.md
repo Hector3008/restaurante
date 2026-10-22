@@ -1,16 +1,16 @@
-# restaurante
+# tobt
 
-Servicio restaurante sobre la base común (`core`). Paso 5 de la pieza 5: pedidos (`pedido`, `PD-`) e ítems (`doc_item`, `DOC_ITEM-`), sus rutas y el **front** con pantalla de Cocina (React + Vite, `client/`). Faltan mesas, croquis, carta, método de pago y seguimiento de delivery (ver `arquitectura.md`, 5.18).
+Servicio tobt sobre la base común (`core`). Paso 5 de la pieza 5: pedidos (`pedido`, `PD-`) e ítems (`doc_item`, `DOC_ITEM-`), sus rutas y el **front** con pantalla de Cocina (React + Vite, `client/`). Faltan mesas, croquis, carta, método de pago y seguimiento de delivery (ver `arquitectura.md`, 5.18).
 
 No abre conexiones: el gateway le pasa el núcleo.
 
 ```js
 // Mi-Servidor / src/services.js (o donde se monten los servicios)
-import { createRouter } from "restaurante";
-gateway.use("/restaurante", createRouter({ core }));
+import { createRouter } from "tobt";
+gateway.use("/tobt", createRouter({ core }));
 ```
 
-`package.json` del gateway: `npm install github:Hector3008/restaurante`.
+`package.json` del gateway: `npm install github:Hector3008/tobt`.
 
 ## Pedidos e ítems
 
@@ -39,7 +39,7 @@ Cobrar exige que no queden ítems en cocina ni listos y que haya al menos uno en
 
 ## Front de Pedidos y Cocina
 
-`client/` (React + Vite, como `cuenta`) con `client/dist` **commiteado**. `createRouter` lo sirve en la raíz del montaje, junto a la API: `<base>/restaurante/`. El cliente pide la API en relativo (`../restaurante/pedidos`, `../auth/yo`, `../catalogo/`), así que **debe montarse en `<base>/restaurante/`** (sin la barra final redirige). Mismo origen que el gateway: la cookie `sid` funciona sin CORS.
+`client/` (React + Vite, como `cuenta`) con `client/dist` **commiteado**. `createRouter` lo sirve en la raíz del montaje, junto a la API: `<base>/tobt/`. El cliente pide la API en relativo (`../tobt/pedidos`, `../auth/yo`, `../catalogo/`), así que **debe montarse en `<base>/tobt/`** (sin la barra final redirige). Mismo origen que el gateway: la cookie `sid` funciona sin CORS.
 
 Sin enrutador: lista de pedidos · nueva · detalle · pedir más · cocina (`#cocina`). La lista muestra los ítems de cada pedido con entrega rápida; Cocina muestra **una tarjeta por ítem** con botón «Listo» (sondeo cada 10 s). Si no hay sesión, hay que cambiar la contraseña temporal o falta elegir empresa, manda a `cuenta` (`../cuenta/`). Ítems del catálogo o libres, en los tres canales; el servidor copia nombre y precio y calcula los importes. Cada botón se muestra según permisos y estación (`client/src/pedidos.js`, `accionesItem`/`accionesPedido`): ocultarlo **no es seguridad**.
 
@@ -52,9 +52,9 @@ npm run dev     # Vite en :5173 con proxy al gateway (GATEWAY_URL para cambiarlo
 
 ## Carta pública y puntos (sin sesión)
 
-Vista para los **clientes**: `<base>/restaurante/catalogo/<slug-de-la-empresa>` (por ejemplo `/restaurante/catalogo/cafe-central`). Muestra la carta (ítems **activos** del catálogo, agrupados por categoría, con buscador) y los puntos acumulados del cliente. Es una segunda página del mismo `client/` (`catalogo.html`, código en `client/src/catalogo/`), compilada junto a la del personal.
+Vista para los **clientes**: `<base>/tobt/catalogo/<slug-de-la-empresa>` (por ejemplo `/tobt/catalogo/cafe-central`). Muestra la carta (ítems **activos** del catálogo, agrupados por categoría, con buscador) y los puntos acumulados del cliente. Es una segunda página del mismo `client/` (`catalogo.html`, código en `client/src/catalogo/`), compilada junto a la del personal.
 
-- **API pública** (solo GET, sin sesión, con límite de 60 consultas por minuto por IP, en memoria): `GET /publico/:empresa/carta` y `GET /publico/:empresa/cliente`. La empresa debe existir, estar activa y tener el servicio `restaurante` activo; si no, siempre el mismo 404. Solo salen código, nombre, categoría y precio: nunca `atributos` ni ítems desactivados.
+- **API pública** (solo GET, sin sesión, con límite de 60 consultas por minuto por IP, en memoria): `GET /publico/:empresa/carta` y `GET /publico/:empresa/cliente`. La empresa debe existir, estar activa y tener el servicio `tobt` activo; si no, siempre el mismo 404. Solo salen código, nombre, categoría y precio: nunca `atributos` ni ítems desactivados.
 - **El cliente está hardcodeado** en `src/cliente-demo.js` (nombre, 120 puntos y 4 movimientos de ejemplo, iguales para todas las empresas). La respuesta lleva `demo: true` y la página lo avisa. Cuando exista la identidad del cliente final y la fidelización (5.11), solo se reemplaza `clienteActual()` de ese archivo.
 - **Detalle del plato:** tocar un plato abre `#/plato/<código>` (ruta por hash; «atrás» vuelve a la carta con su búsqueda y filtro). Muestra categoría, nombre, precio, **descripción** y **foto**, ambas opcionales, y las reseñas. API: `GET /publico/:empresa/plato/:codigo` (404 si no existe o está desactivado). Descripción y foto son atributos del ítem del catálogo, `DESCRIPCION` (texto) e `IMAGEN` (URL **https**); el servicio los declara con `registrarEsquema` y solo esos dos campos salen al público. Una URL que no sea https se descarta. Sin foto no se muestra recuadro. Las imágenes van únicamente en la presentación del plato: las reseñas son solo texto y estrellas.
 - **Reseñas de ejemplo** en `src/resenas-demo.js` (3, iguales para todos los platos, `demo: true`, la página lo avisa). No hay reseñas reales hasta tener identidad del cliente final y dónde guardarlas; entonces solo se reemplaza `resenasDe()`.
@@ -67,6 +67,6 @@ npm test                                   # pruebas sin base de datos (servicio
 MONGODB_URI=mongodb://localhost:27017 npm test   # suma las de MongoDB real (pedidos.test.js)
 ```
 
-El humo contra el gateway (`humo-restaurante.mjs`) va en la carpeta `test/` del gateway, no aquí.
-# restaurante
+El humo contra el gateway (`humo-tobt.mjs`) va en la carpeta `test/` del gateway, no aquí.
+# tobt
 

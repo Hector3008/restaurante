@@ -1,6 +1,6 @@
 import { ErrorPedido } from "./errores.js";
 
-// Recibos del restaurante (arquitectura 5.32). Lógica pura, sin base de datos.
+// Recibos de tobt (arquitectura 5.32). Lógica pura, sin base de datos.
 //
 // Dos clases, las dos NO fiscales (no son una factura ni una boleta electrónica):
 //   · recibo de PAGO: se guarda al cobrar (cada cobro, entero o por ítems, genera uno). Tiene número (RC-0000001),

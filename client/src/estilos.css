@@ -46,7 +46,7 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .enlace-volver { display: inline-block; margin: 0 0 12px; padding: 0; background: none; border: 0; color: var(--color-texto-suave); font: inherit; font-size: .875rem; cursor: pointer; text-decoration: none; }
 .enlace-volver:hover { color: var(--color-texto); }
 
-/* Restaurante: items */
+/* Tobt: items */
 .rs { max-width: 760px; margin: 0 auto; padding: 16px; }
 .rs-centrado { min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
 .rs-aviso-pantalla { max-width: 400px; background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: var(--radio); padding: 24px; display: grid; gap: 12px; justify-items: start; }

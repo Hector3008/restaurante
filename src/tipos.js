@@ -1,4 +1,4 @@
-// Reglas de los dos documentos del restaurante. Se registran en el motor al montar el servicio
+// Reglas de los dos documentos de tobt. Se registran en el motor al montar el servicio
 // (core.documentos.registrarTipo); viajan con este código, los documentos viven en MongoDB.
 //
 // Dos cosas distintas (arquitectura 5.18):

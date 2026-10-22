@@ -52,7 +52,7 @@ export function agruparPorCategoria(items) {
 
 export function crearPublico(core) {
   /**
-   * Empresa pública por slug: debe existir, estar activa y tener el servicio `restaurante` activo.
+   * Empresa pública por slug: debe existir, estar activa y tener el servicio `tobt` activo.
    * Todos los casos de rechazo dan el mismo 404: no se revela qué empresas existen.
    */
   async function empresaPorSlug(slug) {
@@ -60,7 +60,7 @@ export function crearPublico(core) {
     // Empresa es un modelo global (sin tenancy): se consulta sin empresa activa.
     const e = await core.modelos.Empresa.findOne({ slug }).lean();
     if (!e || e.activa === false) throw noEncontrada();
-    const sirve = (e.servicios ?? []).some((s) => s.codigo === "restaurante" && s.activa !== false);
+    const sirve = (e.servicios ?? []).some((s) => s.codigo === "tobt" && s.activa !== false);
     if (!sirve) throw noEncontrada();
     return e;
   }

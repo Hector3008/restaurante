@@ -1,5 +1,5 @@
-// Cliente HTTP del front del restaurante. Mismo patrón que cuenta/client/src/api.js: el front se sirve en
-// `<base>/restaurante/` y la API vive en `<base>/`; con "../" relativo al documento se obtiene `<base>/`
+// Cliente HTTP del front de tobt. Mismo patrón que cuenta/client/src/api.js: el front se sirve en
+// `<base>/tobt/` y la API vive en `<base>/`; con "../" relativo al documento se obtiene `<base>/`
 // sin conocer el BASE_PATH del gateway (mismo origen: la cookie `sid` funciona sin CORS).
 //
 // Todo lo que este front supone de las respuestas está aquí y en pedidos.js.
@@ -8,8 +8,8 @@ const BASE = new URL("../", document.baseURI).pathname;
 /** Dónde iniciar sesión, elegir empresa o cambiar la contraseña (el front de `cuenta`). */
 export const urlCuenta = BASE + "cuenta/";
 
-/** La carta pública de una empresa (la ve el cliente, sin sesión): `<base>/restaurante/catalogo/<slug>`. */
-export const urlCarta = (slug) => BASE + "restaurante/catalogo/" + encodeURIComponent(slug);
+/** La carta pública de una empresa (la ve el cliente, sin sesión): `<base>/tobt/catalogo/<slug>`. */
+export const urlCarta = (slug) => BASE + "tobt/catalogo/" + encodeURIComponent(slug);
 
 export class ErrorApi extends Error {
   constructor(status, codigo, mensaje, datos) {
@@ -33,7 +33,7 @@ async function pedir(metodo, ruta, cuerpo) {
   const cabeceras = { Accept: "application/json" };
   const opciones = { method: metodo, credentials: "same-origin", headers: cabeceras };
   // El backend exige esta cabecera en POST, PUT y DELETE (protección CSRF, 5.13).
-  if (metodo !== "GET") cabeceras["x-requested-with"] = "restaurante";
+  if (metodo !== "GET") cabeceras["x-requested-with"] = "tobt";
   if (cuerpo !== undefined) {
     cabeceras["Content-Type"] = "application/json";
     opciones.body = JSON.stringify(cuerpo);
@@ -80,41 +80,41 @@ export const api = {
 
   // Pedidos: lo que se cobra (todos los ítems de una mesa o persona)
   pedidos: {
-    listar: async (estado) => lista(await pedir("GET", `restaurante/pedidos${consulta(estado, 200)}`), "pedidos"),
-    obtener: (code) => pedir("GET", `restaurante/pedidos/${enc(code)}`),
-    crear: (cuerpo) => pedir("POST", "restaurante/pedidos", cuerpo),
-    agregar: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/items`, cuerpo),
-    editar: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}`, cuerpo),
+    listar: async (estado) => lista(await pedir("GET", `tobt/pedidos${consulta(estado, 200)}`), "pedidos"),
+    obtener: (code) => pedir("GET", `tobt/pedidos/${enc(code)}`),
+    crear: (cuerpo) => pedir("POST", "tobt/pedidos", cuerpo),
+    agregar: (code, cuerpo) => pedir("POST", `tobt/pedidos/${enc(code)}/items`, cuerpo),
+    editar: (code, cuerpo) => pedir("PUT", `tobt/pedidos/${enc(code)}`, cuerpo),
     // clienteId: id del cliente o null para quitarlo (solo con el pedido abierto)
-    asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/pedidos/${enc(code)}/cliente`, cuerpo),
+    asociarCliente: (code, cuerpo) => pedir("PUT", `tobt/pedidos/${enc(code)}/cliente`, cuerpo),
     // Cuenta dividida: cobra solo estos ítems entregados ({ items: ["DOC_ITEM-…"] }); el pedido se cierra solo con el último
-    cobrarItems: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar-items`, cuerpo),
-    cobrar: (code, cuerpo = {}) => pedir("POST", `restaurante/pedidos/${enc(code)}/cobrar`, cuerpo),
-    anular: (code, cuerpo) => pedir("POST", `restaurante/pedidos/${enc(code)}/anular`, cuerpo),
+    cobrarItems: (code, cuerpo) => pedir("POST", `tobt/pedidos/${enc(code)}/cobrar-items`, cuerpo),
+    cobrar: (code, cuerpo = {}) => pedir("POST", `tobt/pedidos/${enc(code)}/cobrar`, cuerpo),
+    anular: (code, cuerpo) => pedir("POST", `tobt/pedidos/${enc(code)}/anular`, cuerpo),
     // Recibos (5.32): la cuenta del pedido (consumo, no se guarda) y los recibos de pago que ya emitió
-    cuenta: (code) => pedir("GET", `restaurante/pedidos/${enc(code)}/cuenta`),
-    recibos: async (code) => (await pedir("GET", `restaurante/pedidos/${enc(code)}/recibos`)).recibos ?? [],
+    cuenta: (code) => pedir("GET", `tobt/pedidos/${enc(code)}/cuenta`),
+    recibos: async (code) => (await pedir("GET", `tobt/pedidos/${enc(code)}/recibos`)).recibos ?? [],
   },
 
   // Recibos de pago (RC-…): el comprobante no fiscal de un cobro
   recibos: {
-    obtener: (code) => pedir("GET", `restaurante/recibos/${enc(code)}`),
+    obtener: (code) => pedir("GET", `tobt/recibos/${enc(code)}`),
   },
 
   // Ítems: un ítem que se mueve por las estaciones (cocina trabaja con estos)
   items: {
-    listar: async (estado) => lista(await pedir("GET", `restaurante/items${consulta(estado, 200)}`), "items"),
+    listar: async (estado) => lista(await pedir("GET", `tobt/items${consulta(estado, 200)}`), "items"),
     // ruta: lista | entregar | anular
-    paso: (code, ruta, cuerpo = {}) => pedir("POST", `restaurante/items/${enc(code)}/${ruta}`, cuerpo),
+    paso: (code, ruta, cuerpo = {}) => pedir("POST", `tobt/items/${enc(code)}/${ruta}`, cuerpo),
     // A quién se le cobra el ítem: clienteId del cliente o null (vuelve al cliente del pedido)
-    asociarCliente: (code, cuerpo) => pedir("PUT", `restaurante/items/${enc(code)}/cliente`, cuerpo),
+    asociarCliente: (code, cuerpo) => pedir("PUT", `tobt/items/${enc(code)}/cliente`, cuerpo),
     // Vale de fidelización (5.30): se aplica a ESTE ítem y baja su subtotal; el vale se gasta
-    aplicarVale: (code, cuerpo) => pedir("POST", `restaurante/items/${enc(code)}/vale`, cuerpo),
+    aplicarVale: (code, cuerpo) => pedir("POST", `tobt/items/${enc(code)}/vale`, cuerpo),
   },
 
   // Vales (fidelizacion:canjear): mirar un vale por su código sin gastarlo
   vales: {
-    consultar: (codigo) => pedir("GET", `restaurante/vales/${enc(codigo)}`),
+    consultar: (codigo) => pedir("GET", `tobt/vales/${enc(codigo)}`),
   },
 
   // Clientes (cliente:leer / cliente:crear / cliente:cuenta): buscar por nombre, teléfono, correo o @usuario.

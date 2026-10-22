@@ -24,8 +24,8 @@ export default defineConfig({
       "/auth": gateway,
       "/catalogo": gateway,
       "/clientes": gateway,
-      "/restaurante/pedidos": gateway,
-      "/restaurante/publico": gateway,
+      "/tobt/pedidos": gateway,
+      "/tobt/publico": gateway,
     },
   },
 });

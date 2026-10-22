@@ -1,6 +1,6 @@
 // Lógica pura de la vista pública de la carta (sin React ni navegador): se prueba con node --test.
 
-/** El slug de la empresa: último tramo de `/restaurante/catalogo/<slug>`; en desarrollo, `?empresa=<slug>`. */
+/** El slug de la empresa: último tramo de `/tobt/catalogo/<slug>`; en desarrollo, `?empresa=<slug>`. */
 export function slugDesdeUbicacion(pathname, search = "") {
   const m = /\/catalogo\/([^/]+)\/?$/.exec(pathname ?? "");
   if (m) {

@@ -1062,7 +1062,7 @@ describe("recibos y cuenta (núcleo falso)", () => {
   });
 });
 
-describe("rutas del restaurante (núcleo falso)", () => {
+describe("rutas de tobt (núcleo falso)", () => {
   let server, url, core;
   const sesion = { auth: { usuarioId: "u1", empresaId: "e1" }, rol: { permisos: ["*"] } };
 
@@ -1083,9 +1083,9 @@ describe("rutas del restaurante (núcleo falso)", () => {
     };
     montarRutas(router, ctx, svc);
     const app = express();
-    app.use("/restaurante", router);
+    app.use("/tobt", router);
     await new Promise((r) => (server = app.listen(0, r)));
-    url = `http://127.0.0.1:${server.address().port}/restaurante`;
+    url = `http://127.0.0.1:${server.address().port}/tobt`;
   });
   after(() => server.close());
 

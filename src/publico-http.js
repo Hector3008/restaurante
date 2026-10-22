@@ -1,7 +1,7 @@
 import { ErrorPedido } from "./errores.js";
 
 /**
- * Rutas públicas del restaurante (SIN sesión): la carta de una empresa y el cliente que la mira.
+ * Rutas públicas de tobt (SIN sesión): la carta de una empresa y el cliente que la mira.
  *
  *   GET /catalogo/:empresa              la página (HTML) de la carta; `:empresa` es el slug
  *   GET /publico/:empresa/carta         { empresa: { nombre, slug, moneda, marca }, categorias: [{ nombre, items }] }
@@ -49,8 +49,8 @@ export function limitadorPorIp({ ventanaMs = VENTANA_MS, max = MAX_POR_VENTANA, 
 const escaparAttr = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /**
- * La página vive en `<base>/restaurante/catalogo/<slug>`, una ruta más profunda que la del front de personal
- * (`<base>/restaurante/`). Los archivos compilados se piden en relativo, así que se fija `<base href>` a la
+ * La página vive en `<base>/tobt/catalogo/<slug>`, una ruta más profunda que la del front de personal
+ * (`<base>/tobt/`). Los archivos compilados se piden en relativo, así que se fija `<base href>` a la
  * raíz del montaje: así el HTML sirve con cualquier BASE_PATH y api.js calcula bien la ruta de la API.
  */
 export function paginaCatalogo(html, baseUrl) {

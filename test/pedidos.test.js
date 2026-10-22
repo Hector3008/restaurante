@@ -15,7 +15,7 @@ describe("pedidos y ítems contra MongoDB real", opts, () => {
   let conn, core, svc, empresaA, empresaB;
   const u = new mongoose.Types.ObjectId();
   const ADMIN = { usuarioId: u, permisos: ["*"] };
-  // Permisos de las plantillas de rol del restaurante (core/src/modelos/plantillas.js)
+  // Permisos de las plantillas de rol de tobt (core/src/modelos/plantillas.js)
   const MESERO = { usuarioId: u, permisos: ["estacion:creacion", "estacion:carta", "documento:crear", "documento:leer", "documento:editar", "catalogo:leer", "cliente:leer", "cliente:crear"] };
   const COCINA = { usuarioId: u, permisos: ["estacion:cocina", "documento:leer", "documento:editar"] };
   const abrir = (empresaId = empresaA, extra = {}) =>
@@ -23,15 +23,15 @@ describe("pedidos y ítems contra MongoDB real", opts, () => {
   const m = (actor, code, extra = {}, empresaId = empresaA) => ({ empresaId, actor, code, ...extra });
 
   before(async () => {
-    conn = await mongoose.createConnection(uri, { dbName: "restaurante-test" }).asPromise();
+    conn = await mongoose.createConnection(uri, { dbName: "tobt-test" }).asPromise();
     for (const c of COLECCIONES) await conn.db.dropCollection(c).catch(() => {});
     core = createCore({ connection: conn });
     core.documentos.registrarTipo(TIPO_ITEM);
     core.documentos.registrarTipo(TIPO_PEDIDO);
     svc = crearServicio(core);
     await Promise.all([core.documentos.listo(), core.eventos.listo(), core.clientes.listo(), core.catalogo.listo()]);
-    empresaA = (await core.empresas.crearEmpresa({ nombre: "Café A", slug: "cafe-a", servicios: ["restaurante"] }))._id;
-    empresaB = (await core.empresas.crearEmpresa({ nombre: "Café B", slug: "cafe-b", servicios: ["restaurante"] }))._id;
+    empresaA = (await core.empresas.crearEmpresa({ nombre: "Café A", slug: "cafe-a", servicios: ["tobt"] }))._id;
+    empresaB = (await core.empresas.crearEmpresa({ nombre: "Café B", slug: "cafe-b", servicios: ["tobt"] }))._id;
     for (const e of [empresaA, empresaB])
       await core.catalogo.crear({ empresaId: e, actor: ADMIN, codigo: "CAFE-1", nombre: "Café", precio: 6.5 });
   });

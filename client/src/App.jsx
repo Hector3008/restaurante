@@ -21,7 +21,7 @@ export default function App() {
     try {
       const d = await api.yo();
       if (d.debeCambiarPassword)
-        setProblema({ texto: "Debes cambiar tu contraseña temporal antes de usar el restaurante.", irACuenta: true });
+        setProblema({ texto: "Debes cambiar tu contraseña temporal antes de usar tobt.", irACuenta: true });
       else if (!d.empresaActivaId)
         setProblema({ texto: "Elige una empresa para continuar.", irACuenta: true });
       else {
@@ -31,7 +31,7 @@ export default function App() {
     } catch (e) {
       if (e instanceof ErrorApi && e.status === 401) setProblema({ texto: "Inicia sesión para continuar.", irACuenta: true });
       else if (e instanceof ErrorApi && e.codigo === "CAMBIO_PASSWORD_REQUERIDO")
-        setProblema({ texto: "Debes cambiar tu contraseña temporal antes de usar el restaurante.", irACuenta: true });
+        setProblema({ texto: "Debes cambiar tu contraseña temporal antes de usar tobt.", irACuenta: true });
       else setProblema({ texto: mensajeDeError(e), irACuenta: false });
     } finally {
       setCargando(false);

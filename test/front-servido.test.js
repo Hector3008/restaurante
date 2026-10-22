@@ -20,18 +20,18 @@ function nucleoFalso() {
   };
 }
 
-describe("front del restaurante servido por createRouter", () => {
+describe("front de tobt servido por createRouter", () => {
   let server, url;
   before(async () => {
     const app = express();
-    app.use("/restaurante", createRouter({ core: nucleoFalso() }));
+    app.use("/tobt", createRouter({ core: nucleoFalso() }));
     await new Promise((r) => (server = app.listen(0, r)));
     url = `http://127.0.0.1:${server.address().port}`;
   });
   after(() => server.close());
 
   it("la raíz entrega el HTML sin caché", async () => {
-    const r = await fetch(`${url}/restaurante/`);
+    const r = await fetch(`${url}/tobt/`);
     assert.equal(r.status, 200);
     assert.match(r.headers.get("content-type"), /html/);
     assert.match(r.headers.get("cache-control"), /no-cache/);
@@ -39,22 +39,22 @@ describe("front del restaurante servido por createRouter", () => {
   });
 
   it("los archivos con hash se cachean para siempre", async () => {
-    const html = await (await fetch(`${url}/restaurante/`)).text();
+    const html = await (await fetch(`${url}/tobt/`)).text();
     const asset = /assets\/[^"']+\.js/.exec(html)?.[0];
     assert.ok(asset, "index.html referencia un .js compilado en relativo");
-    const r = await fetch(`${url}/restaurante/${asset}`);
+    const r = await fetch(`${url}/tobt/${asset}`);
     assert.equal(r.status, 200);
     assert.match(r.headers.get("cache-control"), /immutable/);
   });
 
-  it("sin la barra final redirige: el front pide todo en relativo y necesita /restaurante/", async () => {
-    const r = await fetch(`${url}/restaurante`, { redirect: "manual" });
+  it("sin la barra final redirige: el front pide todo en relativo y necesita /tobt/", async () => {
+    const r = await fetch(`${url}/tobt`, { redirect: "manual" });
     assert.ok([301, 302, 308].includes(r.status), `status ${r.status}`);
-    assert.match(r.headers.get("location"), /\/restaurante\/$/);
+    assert.match(r.headers.get("location"), /\/tobt\/$/);
   });
 
   it("la API sigue siendo la API: /items pasa por la autenticación, no por los archivos estáticos", async () => {
-    const r = await fetch(`${url}/restaurante/items`);
+    const r = await fetch(`${url}/tobt/items`);
     assert.equal(r.status, 401);
   });
 });

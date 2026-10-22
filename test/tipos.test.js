@@ -5,7 +5,7 @@ import { createCore } from "core";
 import { TIPO_ITEM, TIPO_PEDIDO } from "../src/index.js";
 
 // El registro de tipos vive en memoria: no hace falta base de datos
-describe("tipos de documento del restaurante", () => {
+describe("tipos de documento de tobt", () => {
   const core = createCore({ connection: mongoose.createConnection() });
   const tipo = (n) => core.documentos.tipos().find((x) => x.tipo === n);
 
