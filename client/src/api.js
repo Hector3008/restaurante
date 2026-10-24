@@ -120,6 +120,10 @@ export const api = {
   // Clientes (cliente:leer / cliente:crear / cliente:cuenta): buscar por nombre, teléfono, correo o @usuario.
   buscarClientes: async (q) => lista(await pedir("GET", `clientes/?q=${enc(q)}&limite=10`), "clientes"),
   crearCliente: (cuerpo) => pedir("POST", "clientes", cuerpo),
+  // Referidos (5.47): el programa (config), el código de quien refiere y anotar quién refirió a una ficha nueva.
+  configFidelizacion: () => pedir("GET", "clientes/fidelizacion/config"),
+  referidosDe: (clienteId) => pedir("GET", `clientes/${enc(clienteId)}/referidos`),
+  vincularReferente: (clienteId, codigo) => pedir("POST", `clientes/${enc(clienteId)}/referente`, { codigo }),
   // Cuenta del cliente: devuelve la contraseña temporal UNA vez (no se guarda ni se vuelve a mostrar).
   crearCuenta: (clienteId) => pedir("POST", `clientes/${enc(clienteId)}/cuenta`, { generarPassword: true }),
 

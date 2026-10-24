@@ -63,3 +63,10 @@
 .cat-reto small { color: var(--color-texto-suave); }
 .cat-reto--completo { border-color: var(--color-principal); background: color-mix(in srgb, var(--color-principal) 8%, var(--color-superficie)); }
 .cat-reto__codigo { font-family: ui-monospace, monospace; letter-spacing: .12em; color: var(--color-principal); }
+
+/* Invita a un amigo (5.47) */
+.cat-invitar { display: grid; gap: 8px; border-top: 1px solid var(--color-borde); padding-top: 12px; }
+.cat-invitar p { margin: 0; }
+.cat-invitar__codigo { display: grid; gap: 2px; }
+.cat-invitar__codigo strong { font-size: 1.75rem; letter-spacing: 0.18em; color: var(--color-principal); font-variant-numeric: tabular-nums; }
+.cat-invitar__aviso { overflow-wrap: anywhere; }

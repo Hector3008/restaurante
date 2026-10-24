@@ -7,7 +7,7 @@ import { ErrorCatalogo } from "core";
 import { agruparPorCategoria, crearPublico, urlImagenSegura } from "../src/publico.js";
 import { resenasDe } from "../src/resenas-demo.js";
 import { limitadorPorIp, paginaCatalogo } from "../src/publico-http.js";
-import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento, faltanPuntos, formatoCodigoVale, agruparVales, textoVence, textoAvance, textoFaltan, porcentajeReto } from "../client/src/catalogo/logica.js";
+import { slugDesdeUbicacion, formatoPrecio, filtrarCarta, totalItems, formatoPuntos, rutaDesdeHash, hashPlato, estrellasLlenas, formatoNota, validarRegistro, cuerpoRegistro, textoMovimiento, faltanPuntos, formatoCodigoVale, agruparVales, textoVence, textoAvance, textoFaltan, porcentajeReto, normalizarCodigoReferido, validarCodigoReferido, codigoDeEnlace, enlaceInvitacion, textoPremioReferidos, ESTADO_REFERIDO } from "../client/src/catalogo/logica.js";
 
 const middleware = () => (req, res, next) => next();
 
@@ -393,4 +393,39 @@ test("retos en la carta: avance, lo que falta y porcentaje", () => {
   assert.equal(textoFaltan(undefined), "");
   assert.equal(textoAvance(undefined), "0 de 0");
   assert.equal(porcentajeReto({ total: 0, logrados: 0 }), 0);
+});
+
+describe("referidos en la carta (5.47)", () => {
+  it("el código del enlace ?ref= se lee, se normaliza y se descarta si no es válido", () => {
+    assert.equal(codigoDeEnlace("?ref=k7m-2qxa"), "K7M2QXA");
+    assert.equal(codigoDeEnlace("?empresa=geckocafe&ref=K7M2QXA"), "K7M2QXA");
+    for (const m of ["", "?ref=", "?ref=corto", "?ref=K7M2QX0A", "?otro=K7M2QXA"]) assert.equal(codigoDeEnlace(m), "", m);
+  });
+  it("enlaceInvitacion pone ?ref= en la carta actual, sin # ni otro ref", () => {
+    assert.equal(enlaceInvitacion("https://x.pe/tobt/catalogo/geckocafe#/plato/LATTE", "k7m2qxa"), "https://x.pe/tobt/catalogo/geckocafe?ref=K7M2QXA");
+    assert.equal(enlaceInvitacion("https://x.pe/tobt/catalogo/geckocafe?ref=OTRO1234&a=1", "K7M2QXA"), "https://x.pe/tobt/catalogo/geckocafe?ref=K7M2QXA&a=1");
+  });
+  it("validarCodigoReferido: vacío vale; si hay algo, debe tener el formato", () => {
+    assert.equal(validarCodigoReferido(""), null);
+    assert.equal(validarCodigoReferido(undefined), null);
+    assert.equal(validarCodigoReferido(" k7m 2qxa "), null);
+    assert.match(validarCodigoReferido("abc"), /7 letras y números/);
+    assert.match(validarRegistro({ nombre: "Ana", usuario: "a@b.pe", password: "12345678", repetir: "12345678", codigoReferido: "abc" }), /código/);
+    assert.equal(validarRegistro({ nombre: "Ana", usuario: "a@b.pe", password: "12345678", repetir: "12345678", codigoReferido: "" }), null);
+  });
+  it("cuerpoRegistro manda codigoReferido normalizado solo si lo hay", () => {
+    assert.deepEqual(cuerpoRegistro({ nombre: "Ana", usuario: "987654321", password: "x", codigoReferido: " k7m-2qxa " }), { nombre: "Ana", telefono: "987654321", password: "x", quierePuntos: false, codigoReferido: "K7M2QXA" });
+    assert.equal("codigoReferido" in cuerpoRegistro({ nombre: "Ana", usuario: "987654321", password: "x", codigoReferido: "  " }), false);
+  });
+  it("textoPremioReferidos dice lo que gana cada quien y el mínimo; sin puntos no dice nada", () => {
+    assert.equal(textoPremioReferidos({ puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0 }, "PEN"), "Tú ganas 50 puntos y tu amigo 25 cuando pague su primer consumo.");
+    assert.match(textoPremioReferidos({ puntosReferente: 50, puntosReferido: 0, consumoMinimo: 30 }, "PEN"), /^Tú ganas 50 puntos cuando pague su primer consumo \(de .*30.* o más\)\.$/);
+    assert.equal(textoPremioReferidos({ puntosReferente: 0, puntosReferido: 10, consumoMinimo: 0 }), "Tu amigo gana 10 puntos cuando pague su primer consumo.");
+    assert.equal(textoPremioReferidos({ puntosReferente: 0, puntosReferido: 0 }), "");
+  });
+  it("los estados y el bono tienen texto", () => {
+    assert.deepEqual(Object.keys(ESTADO_REFERIDO), ["pendiente", "premiado", "sin_cupo"]);
+    assert.equal(textoMovimiento({ tipo: "bono" }), "Bono por referidos");
+    assert.equal(normalizarCodigoReferido("a b-c"), "ABC");
+  });
 });

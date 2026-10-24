@@ -86,7 +86,7 @@ export default function Catalogo() {
         <p className="rs-empresa">{esloganDe(marca) ?? "Nuestra carta"}</p>
       </header>
 
-      <Cuenta slug={slug} estado={cliente} alCambiar={setCliente} />
+      <Cuenta slug={slug} estado={cliente} alCambiar={setCliente} moneda={empresa.moneda} />
 
       {totalItems(categorias) === 0 ? (
         <p className="rs-vacio">Esta carta todavía no tiene platos.</p>

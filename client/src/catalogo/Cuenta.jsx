@@ -3,14 +3,17 @@ import { api } from "./api.js";
 import Vales from "./Vales.jsx";
 import Logros from "./Logros.jsx";
 import Retos from "./Retos.jsx";
-import { cuerpoRegistro, formatoFecha, formatoPuntos, textoMovimiento, validarRegistro } from "./logica.js";
+import Invitar from "./Invitar.jsx";
+import { codigoDeEnlace, cuerpoRegistro, formatoFecha, formatoPuntos, textoMovimiento, validarRegistro } from "./logica.js";
 
 // Cuenta del cliente en la carta: entrar, crearla (con casilla de consentimiento para el programa de puntos),
 // cambiar la contraseña temporal que dio el personal y ver sus puntos reales. `estado` es lo que responde
 // GET .../cliente: { sesion: false } | { sesion: true, cliente, puntos }.
-export default function Cuenta({ slug, estado, alCambiar }) {
-  const [modo, setModo] = useState(null); // null | "entrar" | "crear"
-  const [f, setF] = useState({ nombre: "", usuario: "", password: "", repetir: "", quierePuntos: false });
+export default function Cuenta({ slug, estado, alCambiar, moneda }) {
+  // Un enlace de invitación (?ref=CODIGO) abre «Crear cuenta» con el código ya puesto (5.47).
+  const [refEnlace] = useState(() => codigoDeEnlace(window.location.search));
+  const [modo, setModo] = useState(refEnlace ? "crear" : null); // null | "entrar" | "crear"
+  const [f, setF] = useState({ nombre: "", usuario: "", password: "", repetir: "", quierePuntos: false, codigoReferido: refEnlace });
   const [cambio, setCambio] = useState({ actual: "", nueva: "", repetir: "" });
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -23,7 +26,7 @@ export default function Cuenta({ slug, estado, alCambiar }) {
     setError("");
     try {
       const r = await fn();
-      setF({ nombre: "", usuario: "", password: "", repetir: "", quierePuntos: false });
+      setF({ nombre: "", usuario: "", password: "", repetir: "", quierePuntos: false, codigoReferido: "" });
       setCambio({ actual: "", nueva: "", repetir: "" });
       setModo(null);
       return r;
@@ -106,6 +109,7 @@ export default function Cuenta({ slug, estado, alCambiar }) {
         {cliente.programaPuntos && puntos?.habilitada !== false && (
           <Vales slug={slug} saldo={puntos?.saldo ?? 0} alCanjear={async () => alCambiar(await api.cliente(slug))} />
         )}
+        <Invitar referidos={estado.referidos} programaPuntos={cliente.programaPuntos} moneda={moneda} />
         <label className="rs-check">
           <input
             type="checkbox"
@@ -157,6 +161,11 @@ export default function Cuenta({ slug, estado, alCambiar }) {
         {!entrar && (
           <>
             <label className="campo"><span>Repite la contraseña</span><input type="password" autoComplete="new-password" value={f.repetir} onChange={campo("repetir")} /></label>
+            <label className="campo">
+              <span>¿Te invitó un amigo? Su código (opcional)</span>
+              <input value={f.codigoReferido} maxLength={12} autoCapitalize="characters" autoComplete="off" onChange={campo("codigoReferido")} />
+              <small className="rs-vacio">Si tu amigo te dio un código, anótalo: los dos ganan puntos cuando pagues tu primer consumo.</small>
+            </label>
             <label className="rs-check">
               <input type="checkbox" checked={f.quierePuntos} onChange={(e) => setF((x) => ({ ...x, quierePuntos: e.target.checked }))} />
               <span>Acepto participar en el programa de puntos: guardar mis consumos para acumular puntos. Puedo retirarlo cuando quiera.</span>

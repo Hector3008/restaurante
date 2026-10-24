@@ -382,6 +382,29 @@ export function cuerpoClienteNuevo({ nombre, telefono, correo }) {
   return { ok: true, cuerpo: { nombre: n, ...(t ? { telefono: t } : {}), ...(c ? { correo: c } : {}) } };
 }
 
+// ---------- referidos (5.47) ----------
+
+const CODIGO_REFERIDO = /^[A-HJ-NP-Z2-9]{7}$/; // el mismo formato que genera el núcleo
+
+/** «k7m-2qxa» → «K7M2QXA». */
+export const normalizarCodigoReferido = (t) => String(t ?? "").toUpperCase().replace(/[\s-]/g, "");
+
+/** ¿Lo escrito es un código de referido completo (y no el nombre o teléfono de alguien)? */
+export const esCodigoReferido = (t) => CODIGO_REFERIDO.test(normalizarCodigoReferido(t));
+
+/**
+ * Quién refirió a un cliente nuevo → el código que se envía a POST /clientes/:id/referente.
+ * `referente` es `{ tipo: "cliente", id, nombre }` (se busca su código) o `{ tipo: "codigo", codigo }`.
+ */
+export function codigoDeReferente(referente, buscarCodigo) {
+  if (!referente) return null;
+  if (referente.tipo === "codigo") return normalizarCodigoReferido(referente.codigo);
+  return buscarCodigo(referente.id);
+}
+
+/** Lo que se le dice a quien cobra tras anotar al referente. */
+export const textoReferenteAnotado = (nombreReferente) => `Anotado: lo refirió ${nombreReferente}. Los dos ganan puntos cuando pague su primer consumo.`;
+
 // Por qué no acumuló; `n` es el sujeto ("El cliente", "Ana")
 const MOTIVOS_PUNTOS = {
   sin_consentimiento: (n) => `${n} no aceptó el programa de puntos: no acumula`,

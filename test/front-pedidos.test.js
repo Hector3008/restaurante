@@ -9,7 +9,7 @@ import { cuerpoPrecio,
   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
   accionesItem, accionesPedido, resumenItems, itemsDeCocina, haceCuanto, puedeMarcarListos,
-  normalizarCodigoVale, puedeAplicarVale, textoDescuento, resumenVale, textoPromociones, avisoPromociones,
+  normalizarCodigoVale, normalizarCodigoReferido, esCodigoReferido, codigoDeReferente, textoReferenteAnotado, puedeAplicarVale, textoDescuento, resumenVale, textoPromociones, avisoPromociones,
   etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos, gruposPorCliente,
 } from "../client/src/pedidos.js";
 
@@ -384,4 +384,17 @@ test("avisoPromociones: solo avisa si el servidor dice que no pudo recalcular", 
   assert.equal(avisoPromociones({ code: "PD-1" }), "");
   assert.equal(avisoPromociones(null), "");
   assert.match(avisoPromociones({ promocionesError: true }), /no se pudieron recalcular las promociones/);
+});
+
+test("referidos (5.47): el código se normaliza y solo el formato completo cuenta como código", () => {
+  assert.equal(normalizarCodigoReferido(" k7m-2qxa "), "K7M2QXA");
+  assert.equal(esCodigoReferido("k7m 2qxa"), true);
+  for (const no of ["", "Ana Pérez", "987654321", "K7M2QX", "K7M2QXAB", "K7M2QX0", "K7M2QXO", "K7M2QX1", "K7M2QXI"]) assert.equal(esCodigoReferido(no), false, no);
+});
+
+test("referidos (5.47): el código de quien refiere sale del código escrito o se busca por su id", async () => {
+  assert.equal(await codigoDeReferente(null, async () => "X"), null);
+  assert.equal(await codigoDeReferente({ tipo: "codigo", codigo: "k7m-2qxa" }, async () => "NO"), "K7M2QXA");
+  assert.equal(await codigoDeReferente({ tipo: "cliente", id: "c1", nombre: "Ana" }, async (id) => `COD-${id}`), "COD-c1");
+  assert.match(textoReferenteAnotado("Ana"), /Ana/);
 });

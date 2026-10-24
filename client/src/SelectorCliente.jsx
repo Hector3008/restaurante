@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
-import { cuerpoClienteNuevo, sinProgramaPuntos } from "./pedidos.js";
+import { codigoDeReferente, cuerpoClienteNuevo, sinProgramaPuntos, textoReferenteAnotado } from "./pedidos.js";
+import SelectorReferente from "./SelectorReferente.jsx";
 
 // Elegir al cliente de un pedido: se busca por nombre, teléfono, correo o @usuario, o se crea uno nuevo (y, si se
 // quiere, su cuenta). Solo habla con /clientes: el pedido guarda el id y una copia del nombre y el teléfono.
@@ -12,6 +13,8 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
   const [error, setError] = useState("");
   const [nuevo, setNuevo] = useState(null); // { nombre, telefono, correo, cuenta } mientras se crea
   const [guardando, setGuardando] = useState(false);
+  const [referidosActivos, setReferidosActivos] = useState(false); // ¿el programa de referidos está encendido? (5.47)
+  const [avisoReferido, setAvisoReferido] = useState("");
   const [temporal, setTemporal] = useState(null); // { nombre, usuario, password } — se muestra una sola vez
 
   // Mientras la contraseña temporal está a la vista, quien usa el selector puede bloquear seguir (se perdería).
@@ -49,6 +52,17 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
     };
   }, [q]);
 
+  // Al abrir «Cliente nuevo» se mira si el programa de referidos está activo; sin permiso o sin programa, no se ofrece.
+  const creando = nuevo !== null;
+  useEffect(() => {
+    if (!creando) return;
+    let vigente = true;
+    api.configFidelizacion().then((c) => vigente && setReferidosActivos(c?.referidos?.habilitada === true), () => vigente && setReferidosActivos(false));
+    return () => {
+      vigente = false;
+    };
+  }, [creando]);
+
   function elegir(c) {
     alCambiar(c);
     setQ("");
@@ -75,6 +89,16 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
         } catch (err) {
           // El cliente quedó creado; solo falló la cuenta. Se elige igual y se dice qué pasó.
           setError(`El cliente se creó, pero no su cuenta: ${mensajeDeError(err)}`);
+        }
+      }
+      if (nuevo.referente && referidosActivos) {
+        try {
+          const codigo = await codigoDeReferente(nuevo.referente, async (id) => (await api.referidosDe(id)).codigo);
+          await api.vincularReferente(c.id, codigo);
+          setAvisoReferido(textoReferenteAnotado(nuevo.referente.tipo === "cliente" ? nuevo.referente.nombre : `el código ${codigo}`));
+        } catch (err) {
+          // La ficha ya existe: solo falló anotar quién la refirió. Se dice y se sigue con el pedido.
+          setError(`El cliente se creó, pero no se anotó quién lo refirió: ${mensajeDeError(err)}`);
         }
       }
       alCambiar(creado);
@@ -145,7 +169,7 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
               )}
             </div>
             {puedeCrear && !nuevo && (
-              <button type="button" className="rs-btn" onClick={() => { setNuevo({ nombre: q.trim(), telefono: "", correo: "", cuenta: false }); setError(""); }}>
+              <button type="button" className="rs-btn" onClick={() => { setNuevo({ nombre: q.trim(), telefono: "", correo: "", cuenta: false, referente: null }); setError(""); setAvisoReferido(""); }}>
                 Cliente nuevo
               </button>
             )}
@@ -176,6 +200,7 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
             <span>Correo</span>
             <input value={nuevo.correo} type="email" maxLength={200} onChange={(e) => setNuevo({ ...nuevo, correo: e.target.value })} />
           </label>
+          {referidosActivos && <SelectorReferente valor={nuevo.referente} alCambiar={(r) => setNuevo((n) => ({ ...n, referente: r }))} />}
           {puedeCuenta && (
             <label className="rs-check">
               <input type="checkbox" checked={nuevo.cuenta} onChange={(e) => setNuevo({ ...nuevo, cuenta: e.target.checked })} />
@@ -189,6 +214,7 @@ export default function SelectorCliente({ valor, alCambiar, puedeCrear = false, 
         </div>
       )}
 
+      {valor && avisoReferido && <p className="rs-vacio" role="status">{avisoReferido}</p>}
       {error && <p className="aviso-error" role="alert">{error}</p>}
     </div>
   );

@@ -80,27 +80,69 @@ export const formatoNota = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixe
 /** Texto de un movimiento de puntos para la lista (el servicio manda `detalle` solo en algunos). */
 export function textoMovimiento(m) {
   if (m?.detalle) return m.detalle;
-  return { acumulo: "Puntos ganados", canje: "Canje de puntos", ajuste: "Ajuste", vencimiento: "Puntos vencidos" }[m?.tipo] ?? "Movimiento";
+  return { acumulo: "Puntos ganados", canje: "Canje de puntos", ajuste: "Ajuste", vencimiento: "Puntos vencidos", bono: "Bono por referidos" }[m?.tipo] ?? "Movimiento";
 }
 
 /** Valida el formulario de registro antes de enviarlo (el servidor valida de verdad). Devuelve un texto o null. */
-export function validarRegistro({ nombre, usuario, password, repetir }) {
+export function validarRegistro({ nombre, usuario, password, repetir, codigoReferido }) {
   if (!String(nombre ?? "").trim()) return "Escribe tu nombre.";
   if (!String(usuario ?? "").trim()) return "Escribe tu correo o tu teléfono.";
   if (String(password ?? "").length < 8) return "La contraseña debe tener al menos 8 caracteres.";
   if (password !== repetir) return "Las contraseñas no coinciden.";
-  return null;
+  return validarCodigoReferido(codigoReferido);
 }
 
 /** Separa lo que escribió el cliente en correo o teléfono (lo que lleva @ es correo). */
-export function cuerpoRegistro({ nombre, usuario, password, quierePuntos }) {
+export function cuerpoRegistro({ nombre, usuario, password, quierePuntos, codigoReferido }) {
   const u = String(usuario).trim();
+  const codigo = normalizarCodigoReferido(codigoReferido);
   return {
     nombre: String(nombre).trim(),
     ...(u.includes("@") ? { correo: u } : { telefono: u }),
     password,
     quierePuntos: quierePuntos === true,
+    ...(codigo ? { codigoReferido: codigo } : {}),
   };
+}
+
+// ---------- referidos (5.47) ----------
+
+const CODIGO_REFERIDO = /^[A-HJ-NP-Z2-9]{7}$/; // 7 caracteres sin 0/O/1/I (igual que el núcleo)
+
+/** Lo que escribe una persona → «K7M2QXA»: mayúsculas, sin espacios ni guiones. */
+export const normalizarCodigoReferido = (t) => String(t ?? "").toUpperCase().replace(/[\s-]/g, "");
+
+/** Vacío es válido (el código es opcional). Devuelve un texto de error o null. */
+export function validarCodigoReferido(t) {
+  const c = normalizarCodigoReferido(t);
+  if (!c) return null;
+  return CODIGO_REFERIDO.test(c) ? null : "El código de tu amigo tiene 7 letras y números (por ejemplo K7M2QXA).";
+}
+
+/** El código que trae el enlace de invitación (?ref=…), o "" si no hay uno válido. */
+export function codigoDeEnlace(search) {
+  const c = normalizarCodigoReferido(new URLSearchParams(search ?? "").get("ref"));
+  return CODIGO_REFERIDO.test(c) ? c : "";
+}
+
+/** El enlace que se comparte: la misma carta con ?ref=CODIGO (se quita otro ref y el #). */
+export function enlaceInvitacion(href, codigo) {
+  const u = new URL(href);
+  u.hash = "";
+  u.searchParams.set("ref", normalizarCodigoReferido(codigo));
+  return u.toString();
+}
+
+export const ESTADO_REFERIDO = { pendiente: "Aún no consume", premiado: "Premiado", sin_cupo: "Sin premio" };
+
+/** «Tú ganas 50 puntos y tu amigo 25 cuando pague su primer consumo (de S/ 30 o más).» */
+export function textoPremioReferidos(r, moneda) {
+  const tu = r?.puntosReferente > 0;
+  const amigo = r?.puntosReferido > 0;
+  if (!tu && !amigo) return "";
+  const quien = tu && amigo ? `Tú ganas ${r.puntosReferente} puntos y tu amigo ${r.puntosReferido}` : tu ? `Tú ganas ${r.puntosReferente} puntos` : `Tu amigo gana ${r.puntosReferido} puntos`;
+  const min = r.consumoMinimo > 0 ? ` (de ${formatoPrecio(r.consumoMinimo, moneda)} o más)` : "";
+  return `${quien} cuando pague su primer consumo${min}.`;
 }
 
 // ---------- beneficios y vales (5.30) ----------
