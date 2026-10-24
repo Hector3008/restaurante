@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ErrorApi, mensajeDeError, urlCarta, urlCuenta } from "./api.js";
-import { permite, puedeCambiarPrecio, puedeMarcarListos } from "./pedidos.js";
+import { avisoPromociones, permite, puedeCambiarPrecio, puedeMarcarListos } from "./pedidos.js";
 import Cocina from "./Cocina.jsx";
 import ListaPedidos from "./ListaPedidos.jsx";
 import FormularioPedido from "./FormularioPedido.jsx";
@@ -98,7 +98,7 @@ export default function App() {
           puedeVerClientes={permite(permisos, "cliente:leer")}
           puedeCrearClientes={permite(permisos, "cliente:crear")}
           puedeCuentas={permite(permisos, "cliente:cuenta")}
-          alGuardar={(c) => setVista({ tipo: "detalle", code: c.code })}
+          alGuardar={(c) => setVista({ tipo: "detalle", code: c.code, aviso: avisoPromociones(c) })}
           alCancelar={aLista}
         />
       )}
@@ -106,6 +106,7 @@ export default function App() {
         <DetallePedido
           key={vista.code}
           code={vista.code}
+          avisoInicial={vista.aviso ?? ""}
           permisos={permisos}
           alVolver={aLista}
           alPedirMas={(pedido) => setVista({ tipo: "mas", pedido })}
@@ -116,7 +117,7 @@ export default function App() {
           pedido={vista.pedido}
           puedeVerCatalogo={permite(permisos, "catalogo:leer")}
           puedeCambiarPrecio={puedeCambiarPrecio(permisos)}
-          alGuardar={() => setVista({ tipo: "detalle", code: vista.pedido.code })}
+          alGuardar={(c) => setVista({ tipo: "detalle", code: vista.pedido.code, aviso: avisoPromociones(c) })}
           alCancelar={() => setVista({ tipo: "detalle", code: vista.pedido.code })}
         />
       )}

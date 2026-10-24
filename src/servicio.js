@@ -53,6 +53,19 @@ export function crearServicio(core) {
 
   // ---------- forma de lo que se devuelve ----------
 
+  // Lo que costaba el ítem antes de promociones. Los ítems anteriores a 5.42 no lo guardan: su subtotal (o, con vale, lo
+  // que había antes del vale) es la base.
+  const baseDe = (x) => {
+    if (x.subtotalBase !== undefined) return x.subtotalBase;
+    if (x.descuento) return x.descuento.subtotalAntes ?? null;
+    return x.subtotal ?? null;
+  };
+  const promocionesDe = (x) =>
+    Array.isArray(x.promociones)
+      ? x.promociones.map((p) => ({ id: p.id, nombre: p.nombre, monto: p.monto, unidades: p.unidades ?? null }))
+      : [];
+  const centavosDe = (n) => Math.round(Number(n) * 100);
+
   const resumenItem = (d) => {
     const x = d.payload?.doc ?? {};
     const s = d.snapshot?.item ?? {};
@@ -70,6 +83,9 @@ export function crearServicio(core) {
       precioCatalogo: s.precioModificado ? s.precioCatalogo ?? null : s.precio ?? null,
       precioModificado: Boolean(s.precioModificado),
       subtotal: x.subtotal ?? null,
+      // Promociones (5.42): `subtotalBase` es precio × cantidad sin promociones; `subtotal` ya viene con ellas.
+      subtotalBase: baseDe(x),
+      promociones: promocionesDe(x),
       // Vale aplicado a este ítem (5.30): el subtotal ya viene con el descuento; aquí queda lo que había antes.
       descuento: x.descuento ?? null,
       moneda: x.moneda ?? null,
@@ -93,6 +109,12 @@ export function crearServicio(core) {
     return centavos / 100;
   }
 
+  // Lo descontado por promociones en los ítems no anulados, en la unidad de la moneda.
+  const ahorroDe = (items) =>
+    items
+      .filter((i) => i.estado !== "anulado")
+      .reduce((n, i) => n + (i.promociones ?? []).reduce((m, p) => m + centavosDe(p.monto), 0), 0) / 100;
+
   // Suma de lo que falta por cobrar (todo lo que no está anulado ni pagado) y de lo ya cobrado.
   const porCobrarDe = (items) => totalDe(items.filter((i) => i.estado !== "pagado"));
   const cobradoDe = (items) => totalDe(items.filter((i) => i.estado === "pagado"));
@@ -114,6 +136,8 @@ export function crearServicio(core) {
       // Solo con el pedido abierto: lo ya cobrado a algunos ítems y lo que falta (null si algún ítem no tiene precio)
       cobrado: d.estado === "abierto" && items ? cobradoDe(items) : null,
       porCobrar: d.estado === "abierto" && items ? porCobrarDe(items) : null,
+      // Lo que se descontó por promociones en los ítems vivos (5.42); null si no se leyeron los ítems.
+      ahorroPromociones: items ? ahorroDe(items) : null,
       items: items ?? null,
       creadoTs: d.createdAt ?? null,
     };
@@ -161,7 +185,7 @@ export function crearServicio(core) {
           tipo: TIPO_ITEM,
           usuarioId: actor.usuarioId,
           snapshot: { item: p.copia },
-          doc: { pedidoCode, cantidad: p.cantidad, notas: p.notas, subtotal: p.subtotal, moneda },
+          doc: { pedidoCode, cantidad: p.cantidad, notas: p.notas, subtotal: p.subtotal, subtotalBase: p.subtotal, promociones: [], moneda },
         });
         codigos.push(d.code);
       }
@@ -189,6 +213,87 @@ export function crearServicio(core) {
     }
   }
 
+  // ---------- promociones (5.42) ----------
+  //
+  // Las promociones se evalúan sobre el CONJUNTO de ítems del pedido, no ítem por ítem, y se recalculan cada vez que el
+  // conjunto cambia (agregar, anular, corregir un precio, aplicar un vale). Siempre se parte de `subtotalBase`, así recalcular
+  // es idempotente. Qué entra al cálculo:
+  //   · ítems del catálogo vivos (en cocina, listos, entregados) y sin vale: reciben las promociones;
+  //   · ítems ya pagados o con un vale: cuentan para formar grupos (un 2x1 no se rompe porque ya se cobró uno o porque
+  //     se le puso un vale), pero no cambian: un ítem lleva una promoción o un vale, nunca los dos;
+  //   · no entran: anulados, líneas libres e ítems sin precio.
+  // Cada línea lleva la hora en que se pidió (`createdAt`): una promoción de horario se decide por esa hora, no por la del
+  // recálculo, así un happy hour concedido a las 20:55 no se quita porque a las 21:05 se pidió otra cosa.
+  // Sin `core.promociones` (pruebas, otro montaje) no hace nada.
+
+  const ESTADOS_CON_PROMOCION = ["en_cocina", "lista", "entregado"];
+
+  async function recalcularUnaVez({ empresaId, actor, pedidoCode }) {
+    const pedido = await cargarPedido(pedidoCode);
+    if (pedido.estado !== "abierto") return;
+    const docs = (await Promise.all((pedido.payload?.doc?.codigosItems ?? []).map((c) => documentos.obtener({ code: c }))))
+      .filter((d) => d && d.tipo === TIPO_ITEM)
+      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+    const lineas = [];
+    for (const d of docs) {
+      if (!ESTADOS_CON_PROMOCION.includes(d.estado) && d.estado !== "pagado") continue;
+      const x = d.payload?.doc ?? {};
+      const s = d.snapshot?.item ?? {};
+      if (s.origen === "libre" || s.precio === null || s.precio === undefined) continue;
+      lineas.push({
+        id: d.code,
+        codigo: s.codigo ?? "",
+        categoria: s.categoria ?? null,
+        cantidad: x.cantidad,
+        precio: s.precio,
+        ...(d.createdAt ? { ahora: d.createdAt } : {}),
+      });
+    }
+    if (!lineas.length) return;
+    const r = await core.promociones.evaluar({ empresaId, lineas, ahora: new Date() });
+    const porCode = new Map(r.lineas.map((l) => [l.id, l]));
+    for (const d of docs) {
+      if (!ESTADOS_CON_PROMOCION.includes(d.estado)) continue; // un ítem pagado ya no cambia
+      const l = porCode.get(d.code);
+      if (!l) continue;
+      const x = d.payload.doc;
+      if (x.descuento) continue; // con un vale no recibe promoción
+      const promociones = l.promociones.map((p) => ({ id: String(p.id), nombre: p.nombre, monto: p.monto, unidades: p.unidades }));
+      const base = baseDe(x);
+      const subtotal = (centavosDe(base) - promociones.reduce((n, p) => n + centavosDe(p.monto), 0)) / 100;
+      const igual =
+        x.subtotal === subtotal &&
+        x.subtotalBase === base &&
+        JSON.stringify(promocionesDe(x)) === JSON.stringify(promociones.map((p) => ({ ...p, unidades: p.unidades ?? null })));
+      if (igual) continue;
+      await documentos.nuevaVersion({
+        code: d.code,
+        doc: { ...x, subtotalBase: base, promociones, subtotal },
+        usuarioId: actor.usuarioId,
+        esperaVersion: d.version,
+      });
+    }
+  }
+
+  /**
+   * Recalcula las promociones de un pedido abierto. Nunca lanza: si no se pudo, devuelve `{ promocionesError: true }` para
+   * que la respuesta avise (el pedido, el ítem o el cobro que lo pidió no se revierten). Ante un conflicto de versión
+   * (otro mesero tocó un ítem a la vez) lo repite entero.
+   */
+  async function recalcularPromociones({ empresaId, actor, pedidoCode }) {
+    if (typeof core.promociones?.evaluar !== "function") return {};
+    for (let intento = 0; ; intento++) {
+      try {
+        await recalcularUnaVez({ empresaId, actor, pedidoCode });
+        return {};
+      } catch (e) {
+        if (e?.codigo === "CONFLICTO_VERSION" && intento < 3) continue;
+        console.error(`tobt: no se pudieron recalcular las promociones del pedido ${pedidoCode}`, e);
+        return { promocionesError: true };
+      }
+    }
+  }
+
   // ---------- pedidos ----------
 
   // Abre el pedido con su primer ítem: el pedido nace al pedir el primer ítem.
@@ -208,7 +313,8 @@ export function crearServicio(core) {
         doc: { canal: p.canal, mesa: p.mesa, referencia: p.referencia, entrega: p.entrega, notas: p.notas, moneda, codigosItems: [] },
       });
       await crearItems({ actor, pedidoCode: pedido.code, moneda, preparados });
-      return await completoPedido(await cargarPedido(pedido.code));
+      const promo = await recalcularPromociones({ empresaId, actor, pedidoCode: pedido.code });
+      return { ...(await completoPedido(await cargarPedido(pedido.code))), ...promo };
     });
   }
 
@@ -220,7 +326,8 @@ export function crearServicio(core) {
       if (pedido.estado !== "abierto") throw new ErrorPedido("ESTADO_INVALIDO", "el pedido ya no está abierto");
       const preparados = await prepararItems({ empresaId, actor, items });
       await crearItems({ actor, pedidoCode: code, moneda: pedido.payload.doc.moneda ?? null, preparados });
-      return await completoPedido(await cargarPedido(code));
+      const promo = await recalcularPromociones({ empresaId, actor, pedidoCode: code });
+      return { ...(await completoPedido(await cargarPedido(code))), ...promo };
     });
   }
 
@@ -608,8 +715,10 @@ export function crearServicio(core) {
         esperaVersion,
       });
       // Si lo último que faltaba por entregar o cobrar se anuló, y ya se cobró algo, el pedido se cierra solo.
+      // Anular un ítem puede quitar la promoción de otros (el que la disparaba) o formar otra: se recalcula antes de cerrar.
+      const promo = a === "anulado" ? await recalcularPromociones({ empresaId, actor, pedidoCode: item.payload.doc.pedidoCode }) : {};
       if (a === "anulado") await cerrarSiCompleto({ actor, code: item.payload.doc.pedidoCode, sistema: true });
-      return completoItem(d);
+      return { ...completoItem(d), ...promo };
     });
   }
 
@@ -660,14 +769,16 @@ export function crearServicio(core) {
         nuevo.precioModificado = precio !== original;
       }
       const { subtotales } = calcularTotales([nuevo], [item.payload.doc.cantidad]);
+      // Con otro precio las promociones que tenía ya no valen: parte de la base nueva y se recalculan enseguida.
       const d = await documentos.nuevaVersion({
         code,
-        doc: { ...item.payload.doc, subtotal: subtotales[0] },
+        doc: { ...item.payload.doc, subtotal: subtotales[0], subtotalBase: subtotales[0], promociones: [] },
         snapshot: { ...item.snapshot, item: nuevo },
         usuarioId: actor.usuarioId,
         esperaVersion: esperaVersion ?? item.version,
       });
-      return completoItem(d);
+      const promo = await recalcularPromociones({ empresaId, actor, pedidoCode: item.payload.doc.pedidoCode });
+      return { ...completoItem(promo.promocionesError ? d : await cargarItem(code)), ...promo };
     });
   }
 
@@ -705,6 +816,9 @@ export function crearServicio(core) {
       if (!["en_cocina", "lista", "entregado"].includes(item.estado))
         throw new ErrorPedido("ESTADO_INVALIDO", `un ítem ${item.estado === "pagado" ? "pagado" : "anulado"} no admite un vale`);
       if (item.payload.doc.descuento) throw new ErrorPedido("ESTADO_INVALIDO", "este ítem ya tiene un vale aplicado");
+      // Promoción y vale no se suman (5.42): el ítem lleva una cosa o la otra.
+      if (promocionesDe(item.payload.doc).length)
+        throw new ErrorPedido("ESTADO_INVALIDO", "este ítem ya tiene una promoción: no admite un vale (anula el ítem y pídelo de nuevo si prefiere el vale)");
 
       const vale = await vales().consultar({ empresaId, actor, codigo });
       if (vale.estado !== "activo") {
@@ -737,7 +851,9 @@ export function crearServicio(core) {
           usuarioId: actor.usuarioId,
           esperaVersion: esperaVersion ?? item.version,
         });
-        return completoItem(d);
+        // El ítem con vale ya no recibe promoción (aunque sí cuenta para formar grupos): se recalculan las de los demás.
+        const promo = await recalcularPromociones({ empresaId, actor, pedidoCode: pedido.code });
+        return { ...completoItem(d), ...promo };
       } catch (e) {
         await vales().liberar({ empresaId, actor, codigo, itemCode: code }).catch(() => {});
         throw e;

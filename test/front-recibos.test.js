@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { METODOS_PAGO, PAGO_INICIAL, avisoRecibo, encabezadoRecibo, cuerpoPago, formatoFechaHora, notaRecibo, textoDescuentoLinea, tituloRecibo, validarPagoForm } from "../client/src/recibos.js";
+import { METODOS_PAGO, PAGO_INICIAL, avisoRecibo, encabezadoRecibo, cuerpoPago, formatoFechaHora, notaRecibo, textoDescuentoLinea, textoPromocionesLinea, tituloRecibo, validarPagoForm } from "../client/src/recibos.js";
 
 test("formulario de pago: sin forma de pago no hay propina ni efectivo; con ella se valida", () => {
   assert.equal(validarPagoForm(PAGO_INICIAL), null);
@@ -55,4 +55,13 @@ test("encabezadoRecibo: nombre, líneas sin vacíos, razón social solo si es di
   assert.deepEqual(encabezadoRecibo({}), { nombre: "", lineas: [], pie: null, logo: null });
   assert.deepEqual(encabezadoRecibo(null), { nombre: "", lineas: [], pie: null, logo: null });
   for (const logo of ["http://e.com/l.png", "javascript:alert(1)", "/l.png", "https://u:p@e.com/l.png", null]) assert.equal(encabezadoRecibo({ empresa: { ...e, logo } }).logo, null, String(logo));
+});
+
+test("textoPromocionesLinea: «Promo nombre: −monto», varias con « · », vacío si no hay (5.42)", () => {
+  const f = (v) => v.toFixed(2);
+  assert.equal(textoPromocionesLinea({ promociones: [{ nombre: "2x1 en lattes", monto: 10 }] }, f), "Promo 2x1 en lattes: −10.00");
+  assert.equal(textoPromocionesLinea({ promociones: [{ nombre: "A", monto: 1 }, { nombre: "B", monto: 2 }] }, f), "Promo A: −1.00 · Promo B: −2.00");
+  assert.equal(textoPromocionesLinea({ promociones: [] }, f), "");
+  assert.equal(textoPromocionesLinea({}, f), "");
+  assert.equal(textoPromocionesLinea(null, f), "");
 });

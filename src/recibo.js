@@ -56,6 +56,8 @@ export function validarPago(pago, ventaCentavos = null) {
 const sumar = (cs) => (cs.some((c) => c === null) ? null : cs.reduce((n, c) => n + c, 0));
 const subtotalC = (i) => (typeof i.subtotal === "number" ? centavos(i.subtotal) : null);
 const montoDescuento = (i) => (i.descuento ? centavos(Number(i.descuento.monto) || 0) : 0);
+// Lo descontado por promociones en un ítem (5.42), en centavos
+const montoPromociones = (i) => (Array.isArray(i.promociones) ? i.promociones.reduce((n, p) => n + centavos(Number(p.monto) || 0), 0) : 0);
 
 const texto = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
@@ -87,6 +89,8 @@ const linea = (i) => ({
   precio: i.precio ?? null,
   subtotal: i.subtotal ?? null,
   descuento: i.descuento ? { vale: i.descuento.vale, beneficio: i.descuento.beneficio ?? null, monto: i.descuento.monto } : null,
+  // Promociones aplicadas a este renglón (5.42): el subtotal ya viene con ellas. Los recibos anteriores no traen el campo.
+  promociones: Array.isArray(i.promociones) ? i.promociones.map((p) => ({ nombre: p.nombre, monto: p.monto })) : [],
 });
 
 const clientesDe = (items) => {
@@ -115,6 +119,7 @@ export function armarRecibo({ pedido, items, pago = SIN_PAGO, empresa = null, mo
     clientes: clientesDe(items),
     subtotal: venta === null ? null : dinero(venta),
     descuentos: dinero(items.reduce((n, i) => n + montoDescuento(i), 0)),
+    promociones: dinero(items.reduce((n, i) => n + montoPromociones(i), 0)),
     propina: dinero(propina),
     total: total === null ? null : dinero(total),
     metodo: pago.metodo ?? null,
@@ -141,6 +146,7 @@ export function reciboDto(d) {
     clientes: x.clientes ?? [],
     subtotal: x.subtotal ?? null,
     descuentos: x.descuentos ?? 0,
+    promociones: x.promociones ?? 0,
     propina: x.propina ?? 0,
     total: x.total ?? null,
     metodo: x.metodo ?? null,
@@ -172,6 +178,7 @@ export function armarCuenta({ pedido, recibos = [], empresa = null }) {
     emitidoTs: pedido.creadoTs ?? null,
     lineas: vivos.map((i) => ({ ...linea(i), estado: i.estado, pagado: i.estado === "pagado" })),
     descuentos: dinero(vivos.reduce((n, i) => n + montoDescuento(i), 0)),
+    promociones: dinero(vivos.reduce((n, i) => n + montoPromociones(i), 0)),
     total: total === null ? null : dinero(total),
     cobrado: cobrado === null ? null : dinero(cobrado),
     porCobrar: faltaC === null ? null : dinero(faltaC),

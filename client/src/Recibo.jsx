@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, mensajeDeError } from "./api.js";
 import { formatoDinero } from "./pedidos.js";
-import { encabezadoRecibo, formatoFechaHora, notaRecibo, textoDescuentoLinea, tituloRecibo } from "./recibos.js";
+import { encabezadoRecibo, formatoFechaHora, notaRecibo, textoDescuentoLinea, textoPromocionesLinea, tituloRecibo } from "./recibos.js";
 
 const destino = (r) => {
   if (r.canal === "salon") return r.mesa ? `Mesa ${r.mesa}` : "Salón";
@@ -63,6 +63,7 @@ export default function Recibo({ codigo, pedido, alCerrar }) {
                 <td>
                   {l.cantidad} × {l.nombre}
                   {textoDescuentoLinea(l, $) && <small className="rs-recibo__desc">{textoDescuentoLinea(l, $)}</small>}
+                  {textoPromocionesLinea(l, $) && <small className="rs-recibo__desc">{textoPromocionesLinea(l, $)}</small>}
                   {!pago && <small className="rs-recibo__desc">{l.pagado ? "Pagado" : "Por cobrar"}</small>}
                 </td>
                 <td className="rs-num">{$(l.subtotal)}</td>
@@ -90,6 +91,7 @@ export default function Recibo({ codigo, pedido, alCerrar }) {
           )}
         </dl>
         {r.descuentos > 0 && <p className="rs-recibo__meta">Incluye descuentos por vales: {$(r.descuentos)}.</p>}
+        {r.promociones > 0 && <p className="rs-recibo__meta">Incluye descuentos por promociones: {$(r.promociones)}.</p>}
         {!pago && r.pagos?.length > 0 && (
           <p className="rs-recibo__meta">
             Pagos: {r.pagos.map((p) => `${p.code}${p.metodoTexto ? ` (${p.metodoTexto})` : ""}`).join(", ")}

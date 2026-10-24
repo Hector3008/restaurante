@@ -9,7 +9,7 @@ import { cuerpoPrecio,
   totalEstimado, agregarDelCatalogo, agregarLibre, cambiarCantidad, fijarPrecio, puedeCambiarPrecio, itemAEnvio,
   formularioVacio, formularioDesdePedido, validarFormulario, cuerpoPedido, cuerpoItems, cuerpoDatos,
   accionesItem, accionesPedido, resumenItems, itemsDeCocina, haceCuanto, puedeMarcarListos,
-  normalizarCodigoVale, puedeAplicarVale, textoDescuento, resumenVale,
+  normalizarCodigoVale, puedeAplicarVale, textoDescuento, resumenVale, textoPromociones, avisoPromociones,
   etiquetaCliente, sinProgramaPuntos, cuerpoClienteNuevo, textoPuntos, gruposPorCliente,
 } from "../client/src/pedidos.js";
 
@@ -356,4 +356,32 @@ test("textoDescuento y resumenVale", () => {
   assert.deepEqual([r.sirve, r.titulo, r.cliente, r.estado], [true, "Café gratis", "Ana", "Activo"]);
   assert.equal(resumenVale({ estado: "usado", beneficio: {}, cliente: {} }).sirve, false);
   assert.equal(resumenVale({ estado: "vencido", beneficio: {}, cliente: {} }).estado, "Vencido");
+});
+
+// ---------- promociones (5.42) ----------
+
+test("puedeAplicarVale: un ítem con promoción no admite vale", () => {
+  assert.equal(puedeAplicarVale({ estado: "lista", promociones: [{ nombre: "2x1", monto: 5 }] }, ["*"]), false);
+  assert.equal(puedeAplicarVale({ estado: "lista", promociones: [] }, ["*"]), true);
+});
+
+test("textoPromociones: nombre, monto y lo que costaba; vacío si no hay promoción", () => {
+  const fmt = (n) => formatoDinero(n, "PEN");
+  assert.equal(textoPromociones({ promociones: [] }, "PEN"), null);
+  assert.equal(textoPromociones({}, "PEN"), null);
+  assert.equal(
+    textoPromociones({ subtotalBase: 24, promociones: [{ nombre: "2x1 en lattes", monto: 12 }] }, "PEN"),
+    `Promo 2x1 en lattes: −${fmt(12)} · antes ${fmt(24)}`,
+  );
+  assert.equal(
+    textoPromociones({ subtotalBase: 24, promociones: [{ nombre: "A", monto: 2 }, { nombre: "B", monto: 3 }] }, "PEN"),
+    `Promo A: −${fmt(2)} · Promo B: −${fmt(3)} · antes ${fmt(24)}`,
+  );
+  assert.equal(textoPromociones({ subtotalBase: null, promociones: [{ nombre: "A", monto: 2 }] }, "PEN"), `Promo A: −${fmt(2)}`);
+});
+
+test("avisoPromociones: solo avisa si el servidor dice que no pudo recalcular", () => {
+  assert.equal(avisoPromociones({ code: "PD-1" }), "");
+  assert.equal(avisoPromociones(null), "");
+  assert.match(avisoPromociones({ promocionesError: true }), /no se pudieron recalcular las promociones/);
 });

@@ -56,6 +56,10 @@ export const notaRecibo = (r) =>
 /** Lo que dice la línea del vale en un renglón: «Vale K7M2QX: −6,50». */
 export const textoDescuentoLinea = (l, formato) => (l?.descuento ? `Vale ${l.descuento.vale}: −${formato(l.descuento.monto)}` : "");
 
+/** Las promociones de un renglón: «Promo 2x1 en lattes: −12,00» (varias, separadas por « · »). Vacío si no hay. */
+export const textoPromocionesLinea = (l, formato) =>
+  (l?.promociones ?? []).map((p) => `Promo ${p.nombre}: −${formato(p.monto)}`).join(" · ");
+
 /** Aviso tras cobrar: el recibo emitido o el problema. null si no se cobró nada nuevo. */
 export function avisoRecibo(respuesta) {
   if (respuesta?.recibo?.code) return { code: respuesta.recibo.code };

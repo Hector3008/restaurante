@@ -20,6 +20,8 @@ import {
   formatoDinero,
   permite,
   textoPuntos,
+  textoPromociones,
+  avisoPromociones,
   normalizarCodigoVale,
   puedeAplicarVale,
   textoDescuento,
@@ -107,9 +109,10 @@ function Fila({ etiqueta, children }) {
 // Un pedido con todos sus ítems. Cada ítem se mueve solo (listo en cocina, entregado por el mesero);
 // el pedido se cobra de una vez cuando todo está entregado. Las acciones llevan la versión que se ve: si
 // otra persona cambió algo, el servidor responde 409 y se recarga con lo último.
-export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) {
+export default function DetallePedido({ code, permisos, alVolver, alPedirMas, avisoInicial = "" }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState("");
+  const [avisoPromo, setAvisoPromo] = useState(avisoInicial); // el cambio se guardó pero no se recalcularon las promociones (5.42)
   // Qué se está enviando ahora: cada botón bloquea solo lo suyo y las demás acciones siguen disponibles,
   // así se pueden lanzar varias a la vez. Claves: el código del ítem, o "pedido" para lo que toca al pedido entero.
   const [enCurso, setEnCurso] = useState(() => new Set());
@@ -162,9 +165,10 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
     marcar(ks, true);
     setError("");
     try {
-      await fn();
+      const r = await fn();
       alTerminar?.();
       await cargar();
+      setAvisoPromo(avisoPromociones(r));
     } catch (e) {
       setError(mensajeDeError(e));
       if (["CONFLICTO_VERSION", "TRANSICION_INVALIDA", "ESTADO_INVALIDO"].includes(e.codigo)) await cargar(true);
@@ -218,6 +222,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       </header>
 
       {error && <p className="aviso-error" role="alert">{error}</p>}
+      {avisoPromo && <p className="aviso-error" role="status">{avisoPromo}</p>}
 
       <dl className="rs-datos">
         <Fila etiqueta="Pedido">{c.code}</Fila>
@@ -281,6 +286,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
               )}
               {i.notas && <small>{i.notas}</small>}
               {i.descuento && <small className="rs-descuento">{textoDescuento(i, moneda)}</small>}
+              {i.estado !== "anulado" && textoPromociones(i, moneda) && <small className="rs-promocion">{textoPromociones(i, moneda)}</small>}
               {(i.cliente || (c.cliente && i.estado !== "anulado")) && (
                 <small>
                   {i.cliente ? `Cliente: ${i.cliente.nombre}` : `Cuenta de ${c.cliente.nombre}`}
@@ -385,6 +391,7 @@ export default function DetallePedido({ code, permisos, alVolver, alPedirMas }) 
       <p className="rs-total">
         Total: <strong>{formatoDinero(c.total, moneda)}</strong>
         {c.total === null && <small> · hay ítems sin precio</small>}
+        {c.ahorroPromociones > 0 && <small> · incluye −{formatoDinero(c.ahorroPromociones, moneda)} por promociones</small>}
         {c.estado === "abierto" && res.pagados > 0 && (
           <small> · cobrado {formatoDinero(res.cobrado, moneda)} · falta {formatoDinero(res.porCobrar, moneda)}</small>
         )}

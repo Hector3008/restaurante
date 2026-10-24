@@ -136,7 +136,7 @@ body { margin: 0; background: var(--color-fondo); color: var(--color-texto); fon
 .rs-vale__ok, .rs-vale__no { margin: 0; }
 .rs-vale__ok { color: var(--color-principal); }
 .rs-vale__no { color: var(--color-error); }
-.rs-descuento { color: var(--color-principal); }
+.rs-descuento, .rs-promocion { color: var(--color-principal); }
 
 /* Recibos y cuenta (5.32) */
 .rs-pago { display: grid; gap: 8px; margin: 12px 0; padding: 10px 12px; border: 1px dashed var(--color-borde); border-radius: 8px; }

@@ -47,7 +47,7 @@ describe("armarRecibo", () => {
     assert.deepEqual(r.empresa, { nombre: "Café Central", razonSocial: null, idFiscal: null, etiquetaIdFiscal: "RUC", direccion: null, telefono: null, pie: null, logo: null });
     assert.equal(r.pedidoCode, "PD-0000001");
     assert.equal(r.moneda, "PEN");
-    assert.deepEqual(r.lineas[0], { itemCode: "DOC_ITEM-1", nombre: "Café", codigo: "CAFÉ", cantidad: 2, precio: 6.5, subtotal: 13, descuento: null });
+    assert.deepEqual(r.lineas[0], { itemCode: "DOC_ITEM-1", nombre: "Café", codigo: "CAFÉ", cantidad: 2, precio: 6.5, subtotal: 13, descuento: null, promociones: [] });
   });
   it("sin pago: método null, propina 0, sin vuelto", () => {
     const r = armarRecibo({ pedido, items });

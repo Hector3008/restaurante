@@ -430,8 +430,30 @@ export function puedeAplicarVale(item, permisos) {
     permite(permisos, "documento:editar") &&
     permite(permisos, "fidelizacion:canjear") &&
     ["en_cocina", "lista", "entregado"].includes(item?.estado) &&
-    !item?.descuento
+    !item?.descuento &&
+    !item?.promociones?.length // promoción y vale no se suman (5.42)
   );
+}
+
+// ---------- promociones (5.42) ----------
+
+/**
+ * Lo que el mesero ve bajo un ítem con promoción: «Promo 2x1 en lattes: −12,00 · antes 24,00». Varias promociones se
+ * separan con « · ». Null si el ítem no tiene ninguna.
+ */
+export function textoPromociones(item, moneda) {
+  const ps = item?.promociones;
+  if (!Array.isArray(ps) || !ps.length) return null;
+  const partes = ps.map((p) => `Promo ${p.nombre}: −${formatoDinero(p.monto, moneda)}`);
+  if (item.subtotalBase !== null && item.subtotalBase !== undefined) partes.push(`antes ${formatoDinero(item.subtotalBase, moneda)}`);
+  return partes.join(" · ");
+}
+
+/** Aviso si el servidor guardó el cambio pero no pudo recalcular las promociones; vacío si todo salió bien. */
+export function avisoPromociones(respuesta) {
+  return respuesta?.promocionesError
+    ? "Se guardó el cambio, pero no se pudieron recalcular las promociones. Revisa los descuentos antes de cobrar."
+    : "";
 }
 
 /** «Vale K7M2QX: −6,50 (Café gratis) · antes 13,00», o null si el ítem no tiene vale. */

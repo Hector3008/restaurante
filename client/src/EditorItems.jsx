@@ -230,7 +230,7 @@ export default function EditorItems({ items, alCambiar, puedeVerCatalogo, puedeC
       )}
       <p className="rs-total">
         Total estimado: <strong>{formatoDinero(total, moneda)}</strong>
-        <small> · el total definitivo lo calcula el servidor con los precios del catálogo</small>
+        <small> · el total definitivo lo calcula el servidor con los precios del catálogo y las promociones vigentes</small>
       </p>
     </section>
   );
